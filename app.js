@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (S.url && document.visibilityState === 'visible') {
       fetchData(true);
     }
-  }, 15000);
+  }, 20000); // fast — Apps Script CacheService ~100ms
 
 });
 
@@ -156,7 +156,7 @@ function fetchData(silent) {
     setConnStatus('checking');
   }
 
-  fetch(S.url + '?action=getData')
+  fetch(S.url + '?action=getData', { cache: 'no-store' })
     .then(function(r) { return r.json(); })
     .then(function(json) {
       btn.classList.remove('spin');
