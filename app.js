@@ -35,7 +35,7 @@ var S = {
 };
 
 // ─── Tabs to exclude from editor board/tabs ───────────────────────────────────
-var EXCLUDED_TABS = ['Lifestyle'];
+var EXCLUDED_TABS = ['Lifestyle', 'Amenities'];
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -116,6 +116,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('refreshBtn').addEventListener('click', function() {
     fetchData();
+  });
+
+  // ── Amenities modal ───────────────────────────────────────────────────────
+  document.getElementById('amenitiesBtn').addEventListener('click', function() {
+    openAmenitiesModal();
   });
 
   // ── Extension download modal ──────────────────────────────────────────────
@@ -1048,6 +1053,7 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     document.getElementById('modalBg').style.display = 'none';
     document.getElementById('extModalBg').style.display = 'none';
+    document.getElementById('amenitiesBg').style.display = 'none';
   }
 });
 
@@ -1268,6 +1274,177 @@ function executeDelete(row) {
   .catch(function(err) {
     btn.classList.remove('spin');
     alert('Error: ' + err.message);
+  });
+}
+
+// ─── Amenities ────────────────────────────────────────────────────────────────
+
+var amenitiesMode = 'search'; // 'search' | 'add'
+
+function openAmenitiesModal() {
+  // Reset to search mode
+  amenitiesMode = 'search';
+  document.getElementById('amenitiesSearchMode').style.display = '';
+  document.getElementById('amenitiesAddMode').style.display = 'none';
+  document.getElementById('amenitiesToggleBtn').textContent = '➕ Add New';
+  document.getElementById('amenitiesSubtitle').textContent = 'Search properties for amenity info';
+
+  // Clear search
+  document.getElementById('amenitiesSearchInput').value = '';
+  renderAmenitiesResults('');
+
+  document.getElementById('amenitiesBg').style.display = 'flex';
+
+  // Focus search input
+  setTimeout(function() {
+    document.getElementById('amenitiesSearchInput').focus();
+  }, 100);
+
+  // Wire up search input
+  var input = document.getElementById('amenitiesSearchInput');
+  input.oninput = function() {
+    renderAmenitiesResults(this.value.toLowerCase().trim());
+  };
+
+  // Wire up save button
+  document.getElementById('amSaveBtn').onclick = saveAmenity;
+}
+
+function closeAmenitiesModal(e) {
+  if (e.target === document.getElementById('amenitiesBg')) {
+    document.getElementById('amenitiesBg').style.display = 'none';
+  }
+}
+
+function toggleAmenitiesMode() {
+  amenitiesMode = amenitiesMode === 'search' ? 'add' : 'search';
+  var isAdd = amenitiesMode === 'add';
+
+  document.getElementById('amenitiesSearchMode').style.display = isAdd ? 'none' : '';
+  document.getElementById('amenitiesAddMode').style.display   = isAdd ? '' : 'none';
+  document.getElementById('amenitiesToggleBtn').textContent   = isAdd ? '🔍 Search' : '➕ Add New';
+  document.getElementById('amenitiesSubtitle').textContent    = isAdd ? 'Add a new amenity entry' : 'Search properties for amenity info';
+
+  if (isAdd) {
+    document.getElementById('amLocation').value  = '';
+    document.getElementById('amDriveLink').value = '';
+    document.getElementById('amNotes').value     = '';
+    document.getElementById('amFeedback').style.display = 'none';
+    setTimeout(function() { document.getElementById('amLocation').focus(); }, 100);
+  } else {
+    setTimeout(function() { document.getElementById('amenitiesSearchInput').focus(); }, 100);
+  }
+}
+
+function renderAmenitiesResults(query) {
+  var wrap     = document.getElementById('amenitiesResults');
+  var amenities = (S.data['Amenities'] || []);
+
+  var filtered = query
+    ? amenities.filter(function(r) {
+        return (String(r['Location'] || '') + String(r['Notes'] || ''))
+          .toLowerCase().includes(query);
+      })
+    : amenities;
+
+  if (amenities.length === 0) {
+    wrap.innerHTML = '<div class="am-empty">No amenities added yet.<br>Click ➕ Add New to get started.</div>';
+    return;
+  }
+
+  if (filtered.length === 0) {
+    wrap.innerHTML = '<div class="am-empty">No results for "<strong>' + esc(query) + '</strong>"</div>';
+    return;
+  }
+
+  var countHtml = '<div class="am-count">' + filtered.length + ' result' + (filtered.length !== 1 ? 's' : '') + '</div>';
+
+  var cardsHtml = filtered.map(function(r) {
+    var loc   = esc(String(r['Location']   || '—'));
+    var notes = esc(String(r['Notes']      || ''));
+    var link  = String(r['Drive Link']     || '');
+    return '<a class="am-result-card" href="' + esc(link) + '" target="_blank" rel="noopener">'
+      + '<div class="am-result-loc">🏢 ' + loc + '</div>'
+      + (notes ? '<div class="am-result-notes">📋 ' + notes + '</div>' : '')
+      + '<div class="am-result-link">↗ Open in Google Drive</div>'
+      + '</a>';
+  }).join('');
+
+  wrap.innerHTML = countHtml + cardsHtml;
+}
+
+function saveAmenity() {
+  var location  = document.getElementById('amLocation').value.trim();
+  var driveLink = document.getElementById('amDriveLink').value.trim();
+  var notes     = document.getElementById('amNotes').value.trim();
+  var feedback  = document.getElementById('amFeedback');
+  var btn       = document.getElementById('amSaveBtn');
+
+  if (!location) {
+    feedback.textContent = '❌ Location is required.';
+    feedback.style.color = 'var(--red)';
+    feedback.style.display = 'block';
+    return;
+  }
+  if (!driveLink) {
+    feedback.textContent = '❌ Google Drive link is required.';
+    feedback.style.color = 'var(--red)';
+    feedback.style.display = 'block';
+    return;
+  }
+
+  btn.textContent = 'Saving…';
+  btn.disabled    = true;
+  feedback.style.display = 'none';
+
+  fetch(S.url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify({
+      action:    'addAmenity',
+      location:  location,
+      driveLink: driveLink,
+      notes:     notes,
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(json) {
+    btn.textContent = 'Save Amenity';
+    btn.disabled    = false;
+
+    if (!json.success) {
+      feedback.textContent    = '❌ ' + (json.error || 'Unknown error');
+      feedback.style.color    = 'var(--red)';
+      feedback.style.display  = 'block';
+      return;
+    }
+
+    // Add to local state immediately
+    if (!S.data['Amenities']) S.data['Amenities'] = [];
+    S.data['Amenities'].push({
+      'Location':   location,
+      'Drive Link': driveLink,
+      'Notes':      notes,
+      '_rowIndex':  S.data['Amenities'].length + 2,
+    });
+
+    feedback.textContent   = '✅ Amenity saved!';
+    feedback.style.color   = 'var(--green)';
+    feedback.style.display = 'block';
+
+    // Switch back to search and show the new entry after a moment
+    setTimeout(function() {
+      toggleAmenitiesMode();
+      document.getElementById('amenitiesSearchInput').value = location;
+      renderAmenitiesResults(location.toLowerCase());
+    }, 800);
+  })
+  .catch(function(err) {
+    btn.textContent = 'Save Amenity';
+    btn.disabled    = false;
+    feedback.textContent   = '❌ ' + err.message;
+    feedback.style.color   = 'var(--red)';
+    feedback.style.display = 'block';
   });
 }
 

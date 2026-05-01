@@ -37,11 +37,6 @@
     <input id="searchInput" type="search" class="search-input" placeholder="Search REQ, reference, location…">
   </div>
 
-      <button class="filter-trigger" id="filterTriggerBtn">
-      ⚡ Filter
-      <span class="filter-badge" id="filterBadge">0</span>
-    </button>
-
   <div class="bar-right">
     <!-- Color theme swatches -->
     <div class="theme-swatches" id="themeSwatches">
@@ -214,9 +209,17 @@
 <!-- Main Dashboard -->
 <div id="mainDash" style="display:none">
 
-  <!-- Toolbar — filter button + view toggle -->
+  <!-- Toolbar — filter button + amenities + view toggle -->
   <div class="toolbar">
-
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="filter-trigger" id="filterTriggerBtn">
+        ⚡ Filter
+        <span class="filter-badge" id="filterBadge">0</span>
+      </button>
+      <button class="filter-trigger" id="amenitiesBtn" style="gap:6px;">
+        🏢 Amenities
+      </button>
+    </div>
     <div class="view-tog">
       <button class="v-btn active" data-view="board" title="Board">
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5" height="13" rx="1" fill="currentColor" opacity=".9"/><rect x="9" y="1" width="5" height="8" rx="1" fill="currentColor" opacity=".9"/><rect x="9" y="11" width="5" height="3" rx="1" fill="currentColor" opacity=".5"/></svg>
@@ -243,6 +246,56 @@
   <!-- Report View -->
   <div id="reportView" class="report-wrap" style="display:none"></div>
 
+</div>
+
+<!-- Amenities Modal -->
+<div id="amenitiesBg" class="modal-bg" style="display:none" onclick="closeAmenitiesModal(event)">
+  <div class="modal" style="max-width:520px;">
+
+    <div class="modal-head">
+      <div>
+        <div class="modal-req" style="font-size:16px;">🏢 Amenities</div>
+        <div class="modal-ref" id="amenitiesSubtitle">Search properties for amenity info</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="modal-edit-btn" id="amenitiesToggleBtn" onclick="toggleAmenitiesMode()">➕ Add New</button>
+        <button class="modal-close" onclick="document.getElementById('amenitiesBg').style.display='none'">✕</button>
+      </div>
+    </div>
+
+    <!-- Search Mode -->
+    <div id="amenitiesSearchMode">
+      <div class="am-search-wrap">
+        <input id="amenitiesSearchInput" class="am-search-input" type="search"
+          placeholder="Type location name…" autocomplete="off">
+      </div>
+      <div id="amenitiesResults" class="am-results"></div>
+    </div>
+
+    <!-- Add Mode -->
+    <div id="amenitiesAddMode" style="display:none;">
+      <div class="edit-form-grid" style="margin-bottom:16px;">
+        <div class="detail-item full">
+          <div class="d-label">Location *</div>
+          <input id="amLocation" class="edit-input" type="text" placeholder="e.g. Binghatti Ghost, Al Jaddaf">
+        </div>
+        <div class="detail-item full">
+          <div class="d-label">Google Drive Link *</div>
+          <input id="amDriveLink" class="edit-input" type="text" placeholder="https://drive.google.com/…">
+        </div>
+        <div class="detail-item full">
+          <div class="d-label">Notes <span style="font-weight:400;text-transform:none;">(optional)</span></div>
+          <input id="amNotes" class="edit-input" type="text" placeholder="e.g. Pool, Gym, Rooftop, Parking">
+        </div>
+      </div>
+      <div class="edit-actions">
+        <button class="edit-save-btn" id="amSaveBtn">Save Amenity</button>
+        <button class="edit-cancel-btn" onclick="toggleAmenitiesMode()">Cancel</button>
+      </div>
+      <p id="amFeedback" style="font-size:12px;margin-top:10px;font-family:var(--mono);display:none;"></p>
+    </div>
+
+  </div>
 </div>
 
 <!-- Modal -->
