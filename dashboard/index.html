@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DP Photo Editors Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Anti-flash: apply saved theme/mode before first paint -->
+  <script>
+    (function() {
+      var mode  = localStorage.getItem('dp_mode')  || 'dark';
+      var theme = localStorage.getItem('dp_theme') || 'green';
+      if (mode === 'light') document.body && document.body.classList.add('light');
+      document.documentElement.setAttribute('data-theme', theme);
+      // body might not exist yet — apply on DOMContentLoaded as fallback
+      document.addEventListener('DOMContentLoaded', function() {
+        if (mode === 'light') document.body.classList.add('light');
+        document.documentElement.setAttribute('data-theme', theme);
+      });
+    })();
+  </script>
+</head>
+<body>
+
+<!-- App Bar -->
+<header class="app-bar">
+  <div class="logo">
+    <div class="logo-dot"></div>
+    DP Photo Editors Studio
+  </div>
+  <div class="logo-sep"></div>
+
+  <div class="search-wrap">
+    <span class="search-ico">&#9906;</span>
+    <input id="searchInput" type="search" class="search-input" placeholder="Search REQ, reference, location…">
+  </div>
+
+  <div class="bar-right">
+    <!-- Color theme swatches -->
+    <div class="theme-swatches" id="themeSwatches">
+      <button class="swatch swatch-green active" data-theme="green" title="Green"></button>
+      <button class="swatch swatch-blue"         data-theme="blue"  title="Blue"></button>
+      <button class="swatch swatch-red"          data-theme="red"   title="Red"></button>
+      <button class="swatch swatch-yellow"       data-theme="yellow" title="Yellow"></button>
+    </div>
+
+    <!-- Dark / Light toggle -->
+    <button class="icon-btn" id="modeToggleBtn" title="Toggle light/dark mode">🌙</button>
+
+    <span id="lastUpdated" class="last-updated" style="display:none">
+      <span class="lu-dot"></span>
+      <span id="luText">—</span>
+    </span>
+    <div id="connStatus" class="conn-status conn-checking" title="Connection status">
+      <span class="conn-dot"></span>
+      <span id="connText">Connecting…</span>
+    </div>
+    <button class="icon-btn" id="refreshBtn" title="Refresh data">↻</button>
+    <button class="pill-btn ext-btn" id="getExtensionBtn">📦 Get Extension</button>
+  </div>
+</header>
+
+<!-- Disconnection Warning Toast -->
+<div id="disconnectToast" class="disconnect-toast" style="display:none">
+  <div class="disconnect-toast-inner">
+    <span class="disconnect-icon">⚠</span>
+    <div>
+      <div class="disconnect-title">Connection Lost</div>
+      <div class="disconnect-msg">Dashboard cannot reach the Apps Script. Data may be stale.</div>
+    </div>
+    <button class="disconnect-retry" onclick="retryConnection()">↻ Retry</button>
+    <button class="disconnect-close" onclick="document.getElementById('disconnectToast').style.display='none'">✕</button>
+  </div>
+</div>
+
+<!-- Extension Download Modal -->
+<div id="extModalBg" class="modal-bg" style="display:none" onclick="closeExtModal(event)">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-req" style="font-size:16px;">📦 DP Listing Extension</div>
+        <div class="modal-ref">Chrome Extension — DP Photo Editors Studio</div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('extModalBg').style.display='none'">✕</button>
+    </div>
+
+    <!-- Download button -->
+    <a href="/extension.zip" download class="ext-download-btn">
+      ⬇ Download Extension (.zip)
+    </a>
+
+    <!-- Google Sheet link -->
+    <a href="https://docs.google.com/spreadsheets/d/19UgIXRizvOcly1UBKJuQIcKe0s4KuSEPuPUOqc5zN-8/edit?gid=460408169#gid=460408169" target="_blank" class="ext-sheet-btn">
+      📊 Open Google Sheet
+    </a>
+
+    <!-- Install steps -->
+    <div class="ext-steps">
+      <div class="ext-steps-title">How to install</div>
+      <div class="ext-step">
+        <div class="ext-step-num">1</div>
+        <div class="ext-step-text">Download the zip file above and <strong>unzip</strong> it to a folder on your computer.</div>
+      </div>
+      <div class="ext-step">
+        <div class="ext-step-num">2</div>
+        <div class="ext-step-text">Open Chrome and go to <code>chrome://extensions</code></div>
+      </div>
+      <div class="ext-step">
+        <div class="ext-step-num">3</div>
+        <div class="ext-step-text">Enable <strong>Developer mode</strong> using the toggle in the top-right corner.</div>
+      </div>
+      <div class="ext-step">
+        <div class="ext-step-num">4</div>
+        <div class="ext-step-text">Click <strong>Load unpacked</strong> and select the unzipped extension folder.</div>
+      </div>
+      <div class="ext-step">
+        <div class="ext-step-num">5</div>
+        <div class="ext-step-text">Click the extension icon in Chrome, enter your name and you're ready to log!</div>
+      </div>
+    </div>
+
+    <div class="ext-note">
+      ⚠ If Chrome says the extension is unverified, click <strong>Keep anyway</strong> — this is expected for internal tools not published to the Chrome Web Store.
+    </div>
+  </div>
+</div>
+
+<!-- Filter Backdrop -->
+<div id="filterBackdrop" class="filter-backdrop"></div>
+
+<!-- Filter Modal -->
+<div id="filterPanel" class="filter-panel">
+  <div class="fp-header">
+    <span class="fp-title">⚡ Filters</span>
+    <button class="fp-close" id="filterCloseBtn">✕</button>
+  </div>
+
+  <div class="fp-body">
+
+    <!-- Time Range -->
+    <div>
+      <div class="fp-section-label">Time Range</div>
+      <div class="fp-time-pills">
+        <button class="fp-t-pill" data-range="today">Today</button>
+        <button class="fp-t-pill" data-range="week">Week</button>
+        <button class="fp-t-pill" data-range="month">Month</button>
+        <button class="fp-t-pill active" data-range="all">All Time</button>
+      </div>
+    </div>
+
+    <!-- Custom Date Range -->
+    <div>
+      <div class="fp-section-label">Custom Date Range</div>
+      <div class="fp-date-row">
+        <input type="date" id="dateFrom" class="fp-date-in" title="From">
+        <span class="fp-date-sep">→</span>
+        <input type="date" id="dateTo" class="fp-date-in" title="To">
+        <button class="fp-apply-date" onclick="applyRange()">Apply</button>
+      </div>
+    </div>
+
+    <!-- Filters Grid -->
+    <div class="fp-filters-grid">
+      <div>
+        <div class="fp-section-label">Status</div>
+        <select id="fStatus" class="fp-select"><option value="">All Statuses</option></select>
+      </div>
+      <div>
+        <div class="fp-section-label">Category</div>
+        <select id="fCategory" class="fp-select"><option value="">All Categories</option></select>
+      </div>
+      <div>
+        <div class="fp-section-label">List Type</div>
+        <select id="fListType" class="fp-select"><option value="">All List Types</option></select>
+      </div>
+      <div>
+        <div class="fp-section-label">Photographer</div>
+        <select id="fPhotographer" class="fp-select"><option value="">All Photographers</option></select>
+      </div>
+      <div>
+        <div class="fp-section-label">Beds</div>
+        <select id="fBeds" class="fp-select"><option value="">All Beds</option></select>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="fp-footer">
+    <button class="fp-apply-btn" id="fpApplyBtn">Apply Filters</button>
+    <button class="fp-clear-btn" id="fpClearBtn">✕ Clear All</button>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="loadingState" class="center-state" style="display:none">
+  <div class="spinner"></div>
+  Fetching listing data…
+</div>
+
+<!-- Error -->
+<div id="errorState" class="center-state" style="display:none">
+  <span class="err-title">⚠ Connection Error</span>
+  <p id="errorMsg" class="err-msg"></p>
+  <button class="pill-btn green" style="margin-top:8px" onclick="fetchData()">↻ Retry</button>
+</div>
+
+<!-- Main Dashboard -->
+<div id="mainDash" style="display:none">
+
+  <!-- Toolbar — filter button + amenities + view toggle -->
+  <div class="toolbar">
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="filter-trigger" id="filterTriggerBtn">
+        ⚡ Filter
+        <span class="filter-badge" id="filterBadge">0</span>
+      </button>
+      <button class="filter-trigger" id="amenitiesBtn" style="gap:6px;">
+        🏢 Amenities
+      </button>
+    </div>
+    <div class="view-tog">
+      <button class="v-btn active" data-view="board" title="Board">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5" height="13" rx="1" fill="currentColor" opacity=".9"/><rect x="9" y="1" width="5" height="8" rx="1" fill="currentColor" opacity=".9"/><rect x="9" y="11" width="5" height="3" rx="1" fill="currentColor" opacity=".5"/></svg>
+      </button>
+      <button class="v-btn" data-view="table" title="Table">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="13" height="2.5" rx="1" fill="currentColor"/><rect x="1" y="5.5" width="13" height="2.5" rx="1" fill="currentColor" opacity=".7"/><rect x="1" y="10" width="13" height="2.5" rx="1" fill="currentColor" opacity=".5"/></svg>
+      </button>
+      <button class="v-btn" data-view="report" title="Report" style="width:auto;padding:0 10px;font-size:10px;font-weight:700;letter-spacing:.06em;font-family:var(--mono)">RPT</button>
+    </div>
+  </div>
+
+  <!-- Editor Tabs -->
+  <div id="editorTabs" class="editor-tabs"></div>
+
+  <!-- Stats Row -->
+  <div id="statsRow" class="stats-row"></div>
+
+  <!-- Board View -->
+  <div id="boardView" class="board"></div>
+
+  <!-- Table View -->
+  <div id="tableView" class="table-wrap" style="display:none"></div>
+
+  <!-- Report View -->
+  <div id="reportView" class="report-wrap" style="display:none"></div>
+
+</div>
+
+<!-- Amenities Modal -->
+<div id="amenitiesBg" class="modal-bg" style="display:none" onclick="closeAmenitiesModal(event)">
+  <div class="modal" style="max-width:520px;">
+
+    <div class="modal-head">
+      <div>
+        <div class="modal-req" style="font-size:16px;">🏢 Amenities</div>
+        <div class="modal-ref" id="amenitiesSubtitle">Search properties for amenity info</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="modal-edit-btn" id="amenitiesToggleBtn" onclick="toggleAmenitiesMode()">➕ Add New</button>
+        <button class="modal-close" onclick="document.getElementById('amenitiesBg').style.display='none'">✕</button>
+      </div>
+    </div>
+
+    <!-- Search Mode -->
+    <div id="amenitiesSearchMode">
+      <div class="am-search-wrap">
+        <input id="amenitiesSearchInput" class="am-search-input" type="search"
+          placeholder="Type location name…" autocomplete="off">
+      </div>
+      <div id="amenitiesResults" class="am-results"></div>
+    </div>
+
+    <!-- Add Mode -->
+    <div id="amenitiesAddMode" style="display:none;">
+      <div class="edit-form-grid" style="margin-bottom:16px;">
+        <div class="detail-item full">
+          <div class="d-label">Location *</div>
+          <input id="amLocation" class="edit-input" type="text" placeholder="e.g. Binghatti Ghost, Al Jaddaf">
+        </div>
+        <div class="detail-item full">
+          <div class="d-label">Google Drive Link *</div>
+          <input id="amDriveLink" class="edit-input" type="text" placeholder="https://drive.google.com/…">
+        </div>
+        <div class="detail-item full">
+          <div class="d-label">Notes <span style="font-weight:400;text-transform:none;">(optional)</span></div>
+          <input id="amNotes" class="edit-input" type="text" placeholder="e.g. Pool, Gym, Rooftop, Parking">
+        </div>
+      </div>
+      <div class="edit-actions">
+        <button class="edit-save-btn" id="amSaveBtn">Save Amenity</button>
+        <button class="edit-cancel-btn" onclick="toggleAmenitiesMode()">Cancel</button>
+      </div>
+      <p id="amFeedback" style="font-size:12px;margin-top:10px;font-family:var(--mono);display:none;"></p>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modalBg" class="modal-bg" style="display:none" onclick="closeModal(event)">
+  <div id="modalInner" class="modal"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
