@@ -1082,7 +1082,6 @@ function renderReport() {
 
   var uploaded = allRows.filter(r => norm(r['Status']) === 'uploaded').length;
   var pending  = allRows.filter(r => norm(r['Status']) === 'pending' || norm(r['Status']) === 'ongoing').length;
-  var compRate = allRows.length ? Math.round(uploaded / allRows.length * 100) : 0;
 
   // Build per-editor rows
   var editorBreakdown = S.editors.map(function(editor) {
@@ -1161,7 +1160,6 @@ function renderReport() {
           ${num(team.total)}
         </tr>
         <tr class="pending-row"><td>Pending</td><td colspan="6"></td><td>${pending}</td></tr>
-        <tr class="rate-row"><td>Completion Rate</td><td colspan="6"></td><td>${compRate}%</td></tr>
       </tbody>
     </table>
   </div>`;
