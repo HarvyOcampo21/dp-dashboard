@@ -10,14 +10,17 @@
   <!-- Anti-flash: apply saved theme/mode before first paint -->
   <script>
     (function() {
+      var validThemes = ['green','blue','red','yellow','stellar','staradmin','corona'];
       var mode  = localStorage.getItem('dp_mode')  || 'dark';
       var theme = localStorage.getItem('dp_theme') || 'green';
+      if (validThemes.indexOf(theme) === -1) theme = 'green';
       if (mode === 'light') document.body && document.body.classList.add('light');
       document.documentElement.setAttribute('data-theme', theme);
-      // body might not exist yet — apply on DOMContentLoaded as fallback
       document.addEventListener('DOMContentLoaded', function() {
         if (mode === 'light') document.body.classList.add('light');
         document.documentElement.setAttribute('data-theme', theme);
+        var sel = document.getElementById('themeSelect');
+        if (sel) sel.value = theme;
       });
     })();
   </script>
@@ -37,13 +40,23 @@
     <input id="searchInput" type="search" class="search-input" placeholder="Search REQ, reference, location…">
   </div>
 
+        <button class="filter-trigger" id="filterTriggerBtn">
+        ⚡ Filter
+        <span class="filter-badge" id="filterBadge">0</span>
+      </button>
+
   <div class="bar-right">
-    <!-- Color theme swatches -->
-    <div class="theme-swatches" id="themeSwatches">
-      <button class="swatch swatch-green active" data-theme="green" title="Green"></button>
-      <button class="swatch swatch-blue"         data-theme="blue"  title="Blue"></button>
-      <button class="swatch swatch-red"          data-theme="red"   title="Red"></button>
-      <button class="swatch swatch-yellow"       data-theme="yellow" title="Yellow"></button>
+    <!-- Theme selector dropdown -->
+    <div class="theme-select-wrap">
+      <select id="themeSelect" class="theme-select">
+        <option value="green">🟢 Green</option>
+        <option value="blue">🔵 Blue</option>
+        <option value="red">🔴 Red</option>
+        <option value="yellow">🟡 Yellow</option>
+        <option value="stellar">⚡ Stellar</option>
+        <option value="staradmin">🌅 Star Admin</option>
+        <option value="corona">🌸 Corona</option>
+      </select>
     </div>
 
     <!-- Dark / Light toggle -->
@@ -212,10 +225,7 @@
   <!-- Toolbar — filter button + amenities + view toggle -->
   <div class="toolbar">
     <div style="display:flex;gap:8px;align-items:center;">
-      <button class="filter-trigger" id="filterTriggerBtn">
-        ⚡ Filter
-        <span class="filter-badge" id="filterBadge">0</span>
-      </button>
+
       <button class="filter-trigger" id="amenitiesBtn" style="gap:6px;">
         🏢 Amenities
       </button>

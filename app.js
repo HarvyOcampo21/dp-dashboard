@@ -128,11 +128,9 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('extModalBg').style.display = 'flex';
   });
 
-  // ── Color theme swatches ──────────────────────────────────────────────────
-  document.querySelectorAll('.swatch').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      applyTheme(btn.dataset.theme);
-    });
+  // ── Theme dropdown ────────────────────────────────────────────────────────
+  document.getElementById('themeSelect').addEventListener('change', function() {
+    applyTheme(this.value);
   });
 
   // ── Dark / Light toggle ───────────────────────────────────────────────────
@@ -1066,140 +1064,109 @@ function getRangeLabel() {
   return 'All time';
 }
 
+// NOTE: This is a PATCHED version focused ONLY on the Report logic changes requested.
+// Drop-in replacement for renderReport() section.
+
 function renderReport() {
   var wrap = document.getElementById('reportView');
 
   var allRows = getAllRows().filter(rowInRange);
 
-  // Build Lifestyle count per editor for current range
-    var lifestyleByEditor = {};
+  var lifestyleRows = (S.data['Lifestyle'] || []).filter(rowInRange);
 
-    (S.data['Lifestyle'] || []).forEach(function(r) {
-      if (!rowInRange(r)) return;
-
-      var editor = String(r['Editor'] || '').trim();
-      var count  = parseInt(r['Count'], 10) || 0;
-
-      if (!editor || count === 0) return;
-
-      lifestyleByEditor[editor] =
-        (lifestyleByEditor[editor] || 0) + count;
-    });
-
-
-  var photoReq = allRows.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length;
-  var agentReq = allRows.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
-  var brochure = allRows.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length;
+  // Incoming request counts
+  var photoReq = allRows.filter(r => norm(r['List Type']) === 'photo request').length;
+  var agentReq = allRows.filter(r => norm(r['List Type']) === 'agent request').length;
+  var brochure = allRows.filter(r => norm(r['List Type']) === 'brochure').length;
   var totalIn  = photoReq + agentReq + brochure;
 
-  var uploaded = allRows.filter(function(r) { return norm(r['Status']) === 'uploaded'; }).length;
-  var pending  = allRows.filter(function(r) { return norm(r['Status']) === 'pending' || norm(r['Status']) === 'ongoing'; }).length;
-  var compRate = allRows.length > 0 ? Math.round(uploaded / allRows.length * 100) : 0;
+  var uploaded = allRows.filter(r => norm(r['Status']) === 'uploaded').length;
+  var pending  = allRows.filter(r => norm(r['Status']) === 'pending' || norm(r['Status']) === 'ongoing').length;
+  var compRate = allRows.length ? Math.round(uploaded / allRows.length * 100) : 0;
 
-  // Per-editor breakdown
+  // Build per-editor rows
   var editorBreakdown = S.editors.map(function(editor) {
-    var rows = (S.data[editor] || [])
-      .map(function(r) { return Object.assign({ _editor: editor }, r); })
-      .filter(rowInRange);
-
-    var lifestyle = lifestyleByEditor[editor] || 0;
+    var rows = (S.data[editor] || []).map(r => Object.assign({_editor:editor},r)).filter(rowInRange);
 
     var photo = rows.filter(r => norm(r['List Type']) === 'photo request').length;
     var agent = rows.filter(r => norm(r['List Type']) === 'agent request').length;
     var broch = rows.filter(r => norm(r['List Type']) === 'brochure').length;
 
-    return {
-      editor: editor,
-      photo: photo,
-      agent: agent,
-      lifestyle: lifestyle,
-      broch: broch,
-      total: photo + agent + lifestyle + broch,
-    };
+    var lRows = lifestyleRows.filter(r => String(r['Editor']).trim() === editor);
+    var lifestyle = lRows.reduce((s,r)=>s+(+r['Lifestyle']||0),0);
+    var profile   = lRows.reduce((s,r)=>s+(+r['Profile']||0),0);
+    var others    = lRows.reduce((s,r)=>s+(+r['Others']||0)+(+r['Count']||0),0);
 
-  }).filter(function(r) { return r.total > 0; })
-    .sort(function(a,b) { return b.total - a.total; });
+    var total = photo + agent + broch + lifestyle + profile + others;
+    if (!total) return null;
 
-  // Fix 2: Lifestyle from its own tab — sum Count values in date range
-  var lifestyleRows = (S.data['Lifestyle'] || []).filter(rowInRange);
-  var lifestyleTotal = lifestyleRows.reduce(function(s, r) {
-    return s + (parseInt(r['Count'], 10) || 0);
-  }, 0);
+    return { editor, photo, agent, broch, lifestyle, profile, others, total };
+  }).filter(Boolean).sort((a,b)=>b.total-a.total);
 
-    var teamPhoto     = editorBreakdown.reduce((s,r) => s + r.photo, 0);
-    var teamAgent     = editorBreakdown.reduce((s,r) => s + r.agent, 0);
-    var teamLifestyle = editorBreakdown.reduce((s,r) => s + r.lifestyle, 0);
-    var teamBroch     = editorBreakdown.reduce((s,r) => s + r.broch, 0);
+  var team = editorBreakdown.reduce((s,r)=>({
+    photo:s.photo+r.photo,
+    agent:s.agent+r.agent,
+    broch:s.broch+r.broch,
+    lifestyle:s.lifestyle+r.lifestyle,
+    profile:s.profile+r.profile,
+    others:s.others+r.others,
+    total:s.total+r.total
+  }),{photo:0,agent:0,broch:0,lifestyle:0,profile:0,others:0,total:0});
 
-    // ✅ this guarantees Row Total matches visible columns
-    var teamTotal = teamPhoto + teamAgent + teamLifestyle + teamBroch;
+  function num(v,c){return `<td class="num-cell ${v===0?'num-zero':''}" ${c?`style=\"color:${c}\"`:''}>${v}</td>`;}
 
+  var rowsHtml = editorBreakdown.map(r=>`
+    <tr>
+      <td class="editor-name">${esc(r.editor)}</td>
+      ${num(r.photo)}${num(r.agent)}${num(r.broch)}
+      ${num(r.lifestyle,'var(--purple)')}${num(r.profile,'var(--blue)')}${num(r.others,'var(--orange)')}
+      ${num(r.total)}
+    </tr>`).join('');
 
-  function numCell(v) {
-    return '<td class="num-cell' + (v === 0 ? ' num-zero' : '') + '">' + v + '</td>';
-  }
+  wrap.innerHTML = `
+  <div class="report-header">
+    <div>
+      <div class="report-title">Daily Report</div>
+      <div class="report-subtitle">${esc(getRangeLabel())}</div>
+    </div>
+  </div>
 
-  var editorRows = editorBreakdown.map(function(r) {
-    return '<tr>'
-      + '<td class="editor-name">' + esc(r.editor) + '</td>'
-      + numCell(r.photo)
-      + numCell(r.agent)
-      + numCell(r.lifestyle)
-      + numCell(r.broch)
-      + numCell(r.total)
-      + '</tr>';
-  }).join('');
+  <div class="report-incoming">
+    <h3>Incoming Requests</h3>
+    <div class="incoming-grid">
+      <div class="incoming-item"><div class="i-label">Photographer Photos</div><div class="i-val blue">${photoReq}</div></div>
+      <div class="incoming-item"><div class="i-label">Agent Property Photos</div><div class="i-val orange">${agentReq}</div></div>
+      <div class="incoming-item"><div class="i-label">Offplan</div><div class="i-val green">${brochure}</div></div>
+      <div class="incoming-item"><div class="i-label">Total Processed</div><div class="i-val white">${totalIn}</div></div>
+    </div>
+  </div>
 
-  // Fix 2: Lifestyle row — only shows Row Total, dashes for breakdown columns
-
-  wrap.innerHTML =
-    '<div class="report-header">'
-    +  '<div>'
-    +    '<div class="report-title">Daily Report</div>'
-    +    '<div class="report-subtitle">' + esc(getRangeLabel()) + '</div>'
-    +  '</div>'
-    + '</div>'
-
-    + '<div class="report-incoming">'
-    +  '<h3>Incoming Requests</h3>'
-    +  '<div class="incoming-grid">'
-    +    '<div class="incoming-item"><div class="i-label">Photographer Photos<br>(Photo Request)</div><div class="i-val blue">' + photoReq + '</div></div>'
-    +    '<div class="incoming-item"><div class="i-label">Agent Property Photos<br>(Agent Request)</div><div class="i-val orange">' + agentReq + '</div></div>'
-    +    '<div class="incoming-item"><div class="i-label">Offplan<br>(Brochure)</div><div class="i-val green">' + brochure + '</div></div>'
-    +    '<div class="incoming-item"><div class="i-label">Total Processed<br>&nbsp;</div><div class="i-val white">' + totalIn + '</div></div>'
-    +    (lifestyleTotal > 0 ? '<div class="incoming-item"><div class="i-label">Lifestyle / Profile / Others<br>&nbsp;</div><div class="i-val" style="color:var(--purple)">' + lifestyleTotal + '</div></div>' : '')
-    +  '</div>'
-    + '</div>'
-
-    + '<div class="report-table-wrap">'
-    +  '<table class="report-table">'
-    +  '<thead><tr>'
-    +    '<th>Editor</th>'
-    +    '<th>Photographer Photos</th>'
-    +    '<th>Agent Property Photos</th>'
-    +    '<th style="color:var(--purple)">Profile / Lifestyle / Others</th>'
-    +    '<th>Offplan</th>'
-    +    '<th>Total</th>'
-    +  '</tr></thead>'
-    +  '<tbody>'
-    +  editorRows
-    +  '<tr class="team-total">'
-    +    '<td>Team Total</td>'
-    +    numCell(teamPhoto) + numCell(teamAgent) + numCell(teamLifestyle) + numCell(teamBroch) + numCell(teamTotal)
-    +  '</tr>'
-    +  '<tr class="pending-row">'
-    +    '<td>Pending</td>'
-    +    '<td colspan="4"></td>'
-    +    '<td class="num-cell">' + pending + '</td>'
-    +  '</tr>'
-    +  '<tr class="rate-row">'
-    +    '<td>Completion Rate</td>'
-    +    '<td colspan="4"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td>'
-    +    '<td class="num-cell">' + compRate + '%</td>'
-    +  '</tr>'
-    +  '</tbody></table>'
-    + '</div>';
+  <div class="report-table-wrap">
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th>Editor</th><th>Photo</th><th>Agent</th><th>Offplan</th>
+          <th style="color:var(--purple)">Lifestyle</th>
+          <th style="color:var(--blue)">Profile</th>
+          <th style="color:var(--orange)">Others</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+        <tr class="team-total">
+          <td>Team Total</td>
+          ${num(team.photo)}${num(team.agent)}${num(team.broch)}
+          ${num(team.lifestyle,'var(--purple)')}${num(team.profile,'var(--blue)')}${num(team.others,'var(--orange)')}
+          ${num(team.total)}
+        </tr>
+        <tr class="pending-row"><td>Pending</td><td colspan="6"></td><td>${pending}</td></tr>
+        <tr class="rate-row"><td>Completion Rate</td><td colspan="6"></td><td>${compRate}%</td></tr>
+      </tbody>
+    </table>
+  </div>`;
 }
+
 
 // ─── Delete (Pending/Ongoing only) ───────────────────────────────────────────
 function confirmDelete(row) {
@@ -1450,7 +1417,7 @@ function saveAmenity() {
 
 // ─── Theme & Mode ─────────────────────────────────────────────────────────────
 
-var THEMES = ['green','blue','red','yellow'];
+var THEMES = ['green','blue','red','yellow','stellar','staradmin','corona'];
 
 function initTheme() {
   var saved = localStorage.getItem('dp_theme') || 'green';
@@ -1462,10 +1429,9 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('dp_theme', theme);
 
-  // Update swatch active state
-  document.querySelectorAll('.swatch').forEach(function(s) {
-    s.classList.toggle('active', s.dataset.theme === theme);
-  });
+  // Sync dropdown
+  var sel = document.getElementById('themeSelect');
+  if (sel) sel.value = theme;
 }
 
 function initMode() {

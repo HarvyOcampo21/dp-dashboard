@@ -2219,3 +2219,149 @@ body.light .date-in    { color-scheme: light; }
   color: var(--text3);
   margin-bottom: 10px;
 }
+
+/* ═══════════════════════════════════════════════
+   THEME DROPDOWN
+   ═══════════════════════════════════════════════ */
+.theme-select-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.theme-select {
+  height: 34px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0 28px 0 10px;
+  color: var(--text2);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  transition: all .15s;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a7558' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  white-space: nowrap;
+}
+.theme-select:hover  { color: var(--text); border-color: var(--border2); }
+.theme-select:focus  { border-color: var(--green); }
+.theme-select option { background: #1a1a2e; color: #e2e8f0; }
+
+/* ═══════════════════════════════════════════════
+   STELLAR THEME — #38CE3C / #181824
+   ═══════════════════════════════════════════════ */
+[data-theme="stellar"] {
+  --bg:        #0e0e18;
+  --bg2:       #181824;
+  --bg3:       #1f1f30;
+  --bg4:       #26263a;
+  --card:      #181824;
+  --card-h:    #1f1f30;
+  --border:    #2a2a40;
+  --border2:   #38385a;
+  --text:      #e8e8f8;
+  --text2:     #8888bb;
+  --text3:     #55557a;
+  --accent:    #38CE3C;
+  --accent-d:  #2aaa2d;
+  --accent-glow: rgba(56,206,60,.13);
+  --green:      #38CE3C;
+  --green-d:    #2aaa2d;
+  --green-glow: rgba(56,206,60,.13);
+}
+
+/* Stellar light */
+[data-theme="stellar"] body.light {
+  --bg:        #f4f4ff;
+  --bg2:       #ffffff;
+  --bg3:       #ededff;
+  --bg4:       #e0e0f5;
+  --card:      #ffffff;
+  --card-h:    #f8f8ff;
+  --border:    #d0d0ee;
+  --border2:   #b8b8e0;
+  --text:      #0e0e1a;
+  --text2:     #4040a0;
+  --text3:     #7070bb;
+}
+
+/* ═══════════════════════════════════════════════
+   STAR ADMIN THEME — #F29F67 / #1E1E2C
+   ═══════════════════════════════════════════════ */
+[data-theme="staradmin"] {
+  --bg:        #13131e;
+  --bg2:       #1e1e2c;
+  --bg3:       #252538;
+  --bg4:       #2c2c44;
+  --card:      #1e1e2c;
+  --card-h:    #252538;
+  --border:    #30304a;
+  --border2:   #40406a;
+  --text:      #f0ede8;
+  --text2:     #b8a898;
+  --text3:     #706050;
+  --accent:    #F29F67;
+  --accent-d:  #d4834a;
+  --accent-glow: rgba(242,159,103,.13);
+  --green:      #F29F67;
+  --green-d:    #d4834a;
+  --green-glow: rgba(242,159,103,.13);
+}
+
+/* Star Admin light */
+[data-theme="staradmin"] body.light {
+  --bg:        #fdf8f4;
+  --bg2:       #ffffff;
+  --bg3:       #faf0e8;
+  --bg4:       #f5e4d0;
+  --card:      #ffffff;
+  --card-h:    #fdf8f4;
+  --border:    #ead8c0;
+  --border2:   #d8bfa0;
+  --text:      #1e1204;
+  --text2:     #7a4a20;
+  --text3:     #a07040;
+}
+
+/* ═══════════════════════════════════════════════
+   CORONA THEME — #AF1763 / #191C24
+   ═══════════════════════════════════════════════ */
+[data-theme="corona"] {
+  --bg:        #10121a;
+  --bg2:       #191c24;
+  --bg3:       #20242f;
+  --bg4:       #282d3a;
+  --card:      #191c24;
+  --card-h:    #20242f;
+  --border:    #2c3040;
+  --border2:   #3c4258;
+  --text:      #f0eaf2;
+  --text2:     #b090b8;
+  --text3:     #706080;
+  --accent:    #AF1763;
+  --accent-d:  #8e1050;
+  --accent-glow: rgba(175,23,99,.14);
+  --green:      #AF1763;
+  --green-d:    #8e1050;
+  --green-glow: rgba(175,23,99,.14);
+}
+
+/* Corona light */
+[data-theme="corona"] body.light {
+  --bg:        #fff0f6;
+  --bg2:       #ffffff;
+  --bg3:       #fce8f2;
+  --bg4:       #f8d0e4;
+  --card:      #ffffff;
+  --card-h:    #fff5fa;
+  --border:    #f0b8d4;
+  --border2:   #e090b8;
+  --text:      #1a0010;
+  --text2:     #80104a;
+  --text3:     #a84070;
+}
