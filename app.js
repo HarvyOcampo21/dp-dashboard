@@ -1551,32 +1551,45 @@ function renderReport() {
       var lRows = lifestyleRows.filter(function (r) {
         return String(r["Editor"] || "").trim() === editor;
       });
-      return {
-        editor: editor,
-        photo: rows.filter(function (r) {
-          return norm(r["List Type"]) === "photo request";
-        }).length,
-        agent: rows.filter(function (r) {
-          return norm(r["List Type"]) === "agent request";
-        }).length,
-        broch: rows.filter(function (r) {
-          return norm(r["List Type"]) === "brochure";
-        }).length,
-        lifestyle: lRows.reduce(function (s, r) {
-          return s + (parseInt(r["Lifestyle"], 10) || 0);
-        }, 0),
-        profile: lRows.reduce(function (s, r) {
-          return s + (parseInt(r["Profile"], 10) || 0);
-        }, 0),
-        others: lRows.reduce(function (s, r) {
-          return (
-            s +
-            (parseInt(r["Others"], 10) || 0) +
-            (parseInt(r["Count"], 10) || 0)
-          );
-        }, 0),
-        total: rows.length,
-      };
+var photo = rows.filter(function (r) {
+  return norm(r["List Type"]) === "photo request";
+}).length;
+
+var agent = rows.filter(function (r) {
+  return norm(r["List Type"]) === "agent request";
+}).length;
+
+var broch = rows.filter(function (r) {
+  return norm(r["List Type"]) === "brochure";
+}).length;
+
+var lifestyle = lRows.reduce(function (s, r) {
+  return s + (parseInt(r["Lifestyle"], 10) || 0);
+}, 0);
+
+var profile = lRows.reduce(function (s, r) {
+  return s + (parseInt(r["Profile"], 10) || 0);
+}, 0);
+
+var others = lRows.reduce(function (s, r) {
+  return (
+    s +
+    (parseInt(r["Others"], 10) || 0) +
+    (parseInt(r["Count"], 10) || 0)
+  );
+}, 0);
+
+return {
+  editor: editor,
+  photo: photo,
+  agent: agent,
+  broch: broch,
+  lifestyle: lifestyle,
+  profile: profile,
+  others: others,
+  total: photo + agent + broch + lifestyle + profile + others // ✅ FIXED
+};
+
     })
     .filter(function (r) {
       return r.total + r.lifestyle + r.profile + r.others > 0;
