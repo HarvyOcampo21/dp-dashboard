@@ -10,7 +10,7 @@
   <!-- Anti-flash: apply saved theme/mode before first paint -->
   <script>
     (function() {
-      var validThemes = ['green','blue','red','yellow','stellar','staradmin','corona'];
+      var validThemes = ['green','blue','red','yellow','stellar','staradmin','corona','black','white'];
       var mode  = localStorage.getItem('dp_mode')  || 'dark';
       var theme = localStorage.getItem('dp_theme') || 'green';
       if (validThemes.indexOf(theme) === -1) theme = 'green';
@@ -26,6 +26,7 @@
   </script>
 </head>
 <body>
+<canvas id="dp-aurora-canvas"></canvas>
 
 <!-- App Bar -->
 <header class="app-bar">
@@ -40,11 +41,6 @@
     <input id="searchInput" type="search" class="search-input" placeholder="Search REQ, reference, location…">
   </div>
 
-        <button class="filter-trigger" id="filterTriggerBtn">
-        ⚡ Filter
-        <span class="filter-badge" id="filterBadge">0</span>
-      </button>
-
   <div class="bar-right">
     <!-- Theme selector dropdown -->
     <div class="theme-select-wrap">
@@ -56,6 +52,8 @@
         <option value="stellar">⚡ Stellar</option>
         <option value="staradmin">🌅 Star Admin</option>
         <option value="corona">🌸 Corona</option>
+        <option value="black">⬛ Black</option>
+        <option value="white">⬜ White</option>
       </select>
     </div>
 
@@ -225,7 +223,10 @@
   <!-- Toolbar — filter button + amenities + view toggle -->
   <div class="toolbar">
     <div style="display:flex;gap:8px;align-items:center;">
-
+      <button class="filter-trigger" id="filterTriggerBtn">
+        ⚡ Filter
+        <span class="filter-badge" id="filterBadge">0</span>
+      </button>
       <button class="filter-trigger" id="amenitiesBtn" style="gap:6px;">
         🏢 Amenities
       </button>
