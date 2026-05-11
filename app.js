@@ -760,7 +760,15 @@ function renderTable(rows) {
   }
 
   if (S.sortCol) {
+    var dateColumns = ['Date Uploaded', 'Received Date'];
+    var isDateCol   = dateColumns.indexOf(S.sortCol) !== -1;
+
     rows = rows.slice().sort(function(a, b) {
+      if (isDateCol) {
+        var da = parseAnyDate(a[S.sortCol]) || new Date(0);
+        var db = parseAnyDate(b[S.sortCol]) || new Date(0);
+        return (da - db) * S.sortDir;
+      }
       var av = String(a[S.sortCol] || '').toLowerCase();
       var bv = String(b[S.sortCol] || '').toLowerCase();
       return av < bv ? -S.sortDir : av > bv ? S.sortDir : 0;
@@ -807,7 +815,11 @@ function renderTable(rows) {
     th.addEventListener('click', function() {
       var col = th.dataset.col;
       if (S.sortCol === col) { S.sortDir *= -1; }
-      else { S.sortCol = col; S.sortDir = 1; }
+      else {
+        S.sortCol = col;
+        // Date columns default to newest first (descending)
+        S.sortDir = (['Date Uploaded','Received Date'].indexOf(col) !== -1) ? -1 : 1;
+      }
       renderTable(getRows(S.editor));
     });
   });
