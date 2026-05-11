@@ -41,6 +41,11 @@
     <input id="searchInput" type="search" class="search-input" placeholder="Search REQ, reference, location…">
   </div>
 
+        <button class="filter-trigger" id="filterTriggerBtn">
+        ⚡ Filter
+        <span class="filter-badge" id="filterBadge">0</span>
+      </button>
+
   <div class="bar-right">
     <!-- Theme selector dropdown -->
     <div class="theme-select-wrap">
@@ -223,10 +228,7 @@
   <!-- Toolbar — filter button + amenities + view toggle -->
   <div class="toolbar">
     <div style="display:flex;gap:8px;align-items:center;">
-      <button class="filter-trigger" id="filterTriggerBtn">
-        ⚡ Filter
-        <span class="filter-badge" id="filterBadge">0</span>
-      </button>
+
       <button class="filter-trigger" id="amenitiesBtn" style="gap:6px;">
         🏢 Amenities
       </button>
