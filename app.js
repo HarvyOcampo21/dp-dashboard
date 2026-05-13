@@ -487,6 +487,16 @@ function rowInRange(row) {
 
   if (S.range === 'today') {
     return d >= today;
+
+  } else if (S.range === 'yesterday') {
+    var yStart = new Date(today);
+    yStart.setDate(yStart.getDate() - 1);
+
+    var yEnd = new Date(yStart);
+    yEnd.setHours(23,59,59,999);
+
+    return d >= yStart && d <= yEnd;
+
   } else if (S.range === 'week') {
     var w = new Date(today); w.setDate(w.getDate() - 7);
     return d >= w;
@@ -1084,6 +1094,7 @@ document.addEventListener('keydown', function(e) {
 function getRangeLabel() {
   if (S.fromDate && S.toDate) return S.fromDate + ' → ' + S.toDate;
   if (S.range === 'today') return 'Today — ' + new Date().toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
+  if (S.range === 'yesterday') return 'Yesterday';
   if (S.range === 'week')  return 'Last 7 days';
   if (S.range === 'month') return 'Last 30 days';
   return 'All time';
