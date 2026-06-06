@@ -487,16 +487,6 @@ function rowInRange(row) {
 
   if (S.range === 'today') {
     return d >= today;
-
-  } else if (S.range === 'yesterday') {
-    var yStart = new Date(today);
-    yStart.setDate(yStart.getDate() - 1);
-
-    var yEnd = new Date(yStart);
-    yEnd.setHours(23,59,59,999);
-
-    return d >= yStart && d <= yEnd;
-
   } else if (S.range === 'week') {
     var w = new Date(today); w.setDate(w.getDate() - 7);
     return d >= w;
@@ -1094,7 +1084,6 @@ document.addEventListener('keydown', function(e) {
 function getRangeLabel() {
   if (S.fromDate && S.toDate) return S.fromDate + ' → ' + S.toDate;
   if (S.range === 'today') return 'Today — ' + new Date().toLocaleDateString('en-GB', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
-  if (S.range === 'yesterday') return 'Yesterday';
   if (S.range === 'week')  return 'Last 7 days';
   if (S.range === 'month') return 'Last 30 days';
   return 'All time';
@@ -1132,13 +1121,19 @@ function getIncomingForRange() {
 }
 
 function renderReport() {
-  var wrap = document.getElementById('reportView');
+  var wrap    = document.getElementById('reportView');
   var allRows = getAllRows().filter(rowInRange);
 
-  var actualPhoto = allRows.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length;
-  var actualAgent = allRows.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
-  var actualBroch = allRows.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length;
-  var actualTotal = actualPhoto + actualAgent + actualBroch;
+  // ── Rejected rows are a SEPARATE metric — must NOT inflate other counts ─────
+  var rejectedRows = allRows.filter(function(r) { return norm(r['Status']) === 'rejected'; });
+  var actualRej    = rejectedRows.length;
+
+  // Photo / Agent / Brochure counts exclude rejected rows
+  var nonRejected = allRows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
+  var actualPhoto  = nonRejected.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length;
+  var actualAgent  = nonRejected.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
+  var actualBroch  = nonRejected.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length;
+  var actualTotal  = actualPhoto + actualAgent + actualBroch;
 
   var uploaded = allRows.filter(function(r) { return norm(r['Status']) === 'uploaded'; }).length;
   var pending  = allRows.filter(function(r) { return norm(r['Status']) === 'pending' || norm(r['Status']) === 'ongoing'; }).length;
@@ -1176,14 +1171,17 @@ function renderReport() {
       + '</div>';
   }
 
+  // ── Per-editor breakdown — rejected is its own column ─────────────────────
   var editorBreakdown = S.editors.map(function(editor) {
-    var rows = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor},r); }).filter(rowInRange);
-    var lRows = lifestyleRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
+    var rows    = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor},r); }).filter(rowInRange);
+    var nonRej  = rows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
+    var lRows   = lifestyleRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
     return {
       editor:    editor,
-      photo:     rows.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
-      agent:     rows.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
-      broch:     rows.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
+      photo:     nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
+      agent:     nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
+      broch:     nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
+      rejected:  rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
       lifestyle: lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
       profile:   lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
       others:    lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
@@ -1193,10 +1191,17 @@ function renderReport() {
     .sort(function(a,b) { return (b.total+b.lifestyle+b.profile+b.others)-(a.total+a.lifestyle+a.profile+a.others); });
 
   var team = editorBreakdown.reduce(function(s,r) {
-    return { photo:s.photo+r.photo, agent:s.agent+r.agent, broch:s.broch+r.broch,
-             lifestyle:s.lifestyle+r.lifestyle, profile:s.profile+r.profile, others:s.others+r.others,
-             total:s.total+r.total };
-  }, {photo:0,agent:0,broch:0,lifestyle:0,profile:0,others:0,total:0});
+    return {
+      photo:     s.photo     + r.photo,
+      agent:     s.agent     + r.agent,
+      broch:     s.broch     + r.broch,
+      rejected:  s.rejected  + r.rejected,
+      lifestyle: s.lifestyle + r.lifestyle,
+      profile:   s.profile   + r.profile,
+      others:    s.others    + r.others,
+      total:     s.total     + r.total,
+    };
+  }, {photo:0,agent:0,broch:0,rejected:0,lifestyle:0,profile:0,others:0,total:0});
 
   function num(v, color) {
     var style = color ? ' style="color:' + color + '"' : '';
@@ -1207,10 +1212,14 @@ function renderReport() {
     return '<tr>'
       + '<td class="editor-name">' + esc(r.editor) + '</td>'
       + num(r.photo) + num(r.agent) + num(r.broch)
+      + num(r.rejected, r.rejected > 0 ? 'var(--red)' : null)
       + num(r.lifestyle,'var(--purple)') + num(r.profile,'var(--blue)') + num(r.others,'var(--orange)')
       + num(r.total)
       + '</tr>';
   }).join('');
+
+  // colspan for pending/rate rows = 7 (photo+agent+offplan+rejected+lifestyle+profile+others)
+  var footColspan = '7';
 
   wrap.innerHTML =
     '<div class="report-header">'
@@ -1227,6 +1236,12 @@ function renderReport() {
     +     incCard('📷 Photographer Photos',   actualPhoto,     expPhoto, 'blue')
     +     incCard('🏠 Agent Property Photos',  actualAgent,     expAgent, 'orange')
     +     incCard('📄 Offplan / Brochure',     actualBroch,     expBroch, 'green')
+    // FEATURE 1 — Rejected card between Offplan and Lifestyle
+    +     '<div class="incoming-item">'
+    +       '<div class="i-label">❌ Rejected</div>'
+    +       '<div class="i-val" style="color:var(--red)">' + actualRej + '</div>'
+    +       '<div class="inc-expected inc-no-data">Independent metric</div>'
+    +     '</div>'
     +     incCard('🎬 Lifestyle',              actualLifestyle, expLife,  '')
     +     incCard('👤 Profile',                actualProfile,   expProf,  '')
     +     incCard('📦 Others',                 actualOthers,    expOth,   '')
@@ -1234,8 +1249,8 @@ function renderReport() {
     +       '<div class="i-label">Total Processed</div>'
     +       '<div class="i-val white">' + actualTotal + '</div>'
     +       (expTotal !== null
-    +          '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
-    +          '<div class="inc-expected inc-no-data">No morning input</div>')
+    +         ? '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
+    +         : '<div class="inc-expected inc-no-data">No morning input</div>')
     +     '</div>'
     +   '</div>'
     + '</div>'
@@ -1243,23 +1258,27 @@ function renderReport() {
     + '<div class="report-table-wrap">'
     +   '<table class="report-table"><thead><tr>'
     +     '<th>Editor</th><th>Photo</th><th>Agent</th><th>Offplan</th>'
+    // FEATURE 2 — Rejected column between Offplan and Lifestyle
+    +     '<th style="color:var(--red)">Rejected</th>'
     +     '<th style="color:var(--purple)">Lifestyle</th>'
     +     '<th style="color:var(--blue)">Profile</th>'
     +     '<th style="color:var(--orange)">Others</th>'
     +     '<th>Total</th>'
     +   '</tr></thead><tbody>'
     +   editorRows
+    // FEATURE 4 — Team Total includes Rejected
     +   '<tr class="team-total"><td>Team Total</td>'
     +     num(team.photo) + num(team.agent) + num(team.broch)
+    +     num(team.rejected, team.rejected > 0 ? 'var(--red)' : null)
     +     num(team.lifestyle,'var(--purple)') + num(team.profile,'var(--blue)') + num(team.others,'var(--orange)')
     +     num(team.total)
     +   '</tr>'
-    +   '<tr class="pending-row"><td>Pending</td><td colspan="6"></td><td class="num-cell">' + pending + '</td></tr>'
-    +   '<tr class="rate-row"><td>Completion Rate</td><td colspan="6"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td><td class="num-cell">' + compRate + '%</td></tr>'
+    // FEATURE 5 — Pending and Completion Rate unchanged
+    +   '<tr class="pending-row"><td>Pending</td><td colspan="' + footColspan + '"></td><td class="num-cell">' + pending + '</td></tr>'
+    +   '<tr class="rate-row"><td>Completion Rate</td><td colspan="' + footColspan + '"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td><td class="num-cell">' + compRate + '%</td></tr>'
     +   '</tbody></table>'
     + '</div>';
 }
-
 // ─── Incoming Modal ───────────────────────────────────────────────────────────
 function openIncomingModal() {
   var existing = document.getElementById('incomingModalBg');
