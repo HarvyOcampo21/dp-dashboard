@@ -1249,8 +1249,8 @@ function renderReport() {
     +       '<div class="i-label">Total Processed</div>'
     +       '<div class="i-val white">' + actualTotal + '</div>'
     +       (expTotal !== null
-    +         ? '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
-    +         : '<div class="inc-expected inc-no-data">No morning input</div>')
+    +         '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
+    +         '<div class="inc-expected inc-no-data">No morning input</div>')
     +     '</div>'
     +   '</div>'
     + '</div>'
