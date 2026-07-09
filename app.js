@@ -889,7 +889,7 @@ function openModal(row) {
 
   html += '</div>';
 
-  html += buildHistorySectionHtml(row['Listing Reference']);
+  html += buildHistorySectionHtml(row['DP-REQ Number']);
 
   if (row._editor) {
     html += '<div class="modal-editor">Editor tab: ' + esc(row._editor) + '</div>';
@@ -900,7 +900,7 @@ function openModal(row) {
 }
 
 // ─── Assigner history (from the merged "Assignments" tab) ─────────────────────
-// Joined on Listing Reference (Copier) === Ref (Assigner) — same DP-R/DP-S value
+// Joined on DP-REQ Number (Copier) === Ref (Assigner) — same DP-REQ-xxxxx value
 // in both sheets. Builds a chronological dot timeline from whichever of
 // Assigned/Reassigned/Started/On Hold/Completed/Rejected the matched row has.
 function buildHistorySectionHtml(ref) {
