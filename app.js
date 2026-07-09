@@ -35,7 +35,7 @@ var S = {
 };
 
 // ─── Tabs to exclude from editor board/tabs ───────────────────────────────────
-var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming'];
+var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments'];
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -889,12 +889,119 @@ function openModal(row) {
 
   html += '</div>';
 
+  html += buildHistorySectionHtml(row['Listing Reference']);
+
   if (row._editor) {
     html += '<div class="modal-editor">Editor tab: ' + esc(row._editor) + '</div>';
   }
 
   document.getElementById('modalInner').innerHTML = html;
   document.getElementById('modalBg').style.display = 'flex';
+}
+
+// ─── Assigner history (from the merged "Assignments" tab) ─────────────────────
+// Joined on Listing Reference (Copier) === Ref (Assigner) — same DP-R/DP-S value
+// in both sheets. Builds a chronological dot timeline from whichever of
+// Assigned/Reassigned/Started/On Hold/Completed/Rejected the matched row has.
+function buildHistorySectionHtml(ref) {
+  var html = '<div class="history-section">'
+    + '<div class="d-label">History</div>';
+
+  var rows = (S.data && S.data['Assignments']) || [];
+  var match = null;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i]['Ref'] === ref) { match = rows[i]; break; }
+  }
+
+  if (!match) {
+    html += '<div class="history-empty">No history</div></div>';
+    return html;
+  }
+
+  var events = [];
+
+  if (match['AssignedAt']) {
+    // If this listing was later reassigned, the "assigned to" name for this
+    // very first event is who it was ORIGINALLY given to — ReassignedFrom —
+    // not the current Editor, which by then has already moved on.
+    var firstEditor = match['ReassignedFrom'] || match['Editor'] || '';
+    events.push({
+      at:    match['AssignedAt'],
+      type:  'assigned',
+      label: 'Assigned',
+      meta:  firstEditor ? ('to ' + firstEditor) : '',
+    });
+  }
+
+  if (match['ReassignedAt']) {
+    var from = match['ReassignedFrom'] || '?';
+    var to   = match['ReassignedTo']   || '?';
+    var by   = match['ReassignedBy'];
+    events.push({
+      at:    match['ReassignedAt'],
+      type:  'reassigned',
+      label: 'Reassigned',
+      meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
+    });
+  }
+
+  if (match['StartedAt']) {
+    events.push({
+      at:    match['StartedAt'],
+      type:  'started',
+      label: 'Started',
+      meta:  '',
+    });
+  }
+
+  if (match['OnHoldAt']) {
+    events.push({
+      at:    match['OnHoldAt'],
+      type:  'onhold',
+      label: 'On hold',
+      meta:  match['OnHoldReason'] || '',
+    });
+  }
+
+  if (match['CompletedAt']) {
+    events.push({
+      at:    match['CompletedAt'],
+      type:  'completed',
+      label: 'Completed',
+      meta:  '',
+    });
+  }
+
+  if (match['RejectedAt']) {
+    events.push({
+      at:    match['RejectedAt'],
+      type:  'rejected',
+      label: 'Rejected',
+      meta:  '',
+    });
+  }
+
+  if (!events.length) {
+    html += '<div class="history-empty">No history</div></div>';
+    return html;
+  }
+
+  events.sort(function(a, b) { return new Date(a.at) - new Date(b.at); });
+
+  html += '<div class="history-timeline">';
+  events.forEach(function(ev, i) {
+    var isLast = i === events.length - 1;
+    html += '<div class="history-item' + (isLast ? ' is-last' : '') + '">'
+      +   '<div class="history-dot h-dot-' + ev.type + '"></div>'
+      +   '<div class="history-item-body">'
+      +     '<div class="history-label">' + esc(ev.label) + '</div>'
+      +     '<div class="history-meta">' + esc(fmtDateFull(ev.at)) + (ev.meta ? ' \u00B7 ' + esc(ev.meta) : '') + '</div>'
+      +   '</div>'
+      + '</div>';
+  });
+  html += '</div></div>';
+
+  return html;
 }
 
 // ─── Edit Modal ───────────────────────────────────────────────────────────────

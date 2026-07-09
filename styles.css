@@ -940,6 +940,68 @@ body {
   color: var(--text3);
 }
 
+.history-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.history-empty {
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text3);
+}
+
+.history-timeline {
+  margin-top: 12px;
+}
+
+.history-item {
+  display: flex;
+  gap: 10px;
+  position: relative;
+}
+
+.history-item:not(.is-last) .history-item-body {
+  padding-bottom: 14px;
+  border-left: 1px solid var(--border);
+  margin-left: -15px;
+  padding-left: 16px;
+}
+
+.history-item.is-last .history-item-body {
+  padding-left: 16px;
+}
+
+.history-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.h-dot-assigned   { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-bg); }
+.h-dot-reassigned { background: var(--purple); box-shadow: 0 0 0 3px var(--purple-bg); }
+.h-dot-started    { background: var(--green);  box-shadow: 0 0 0 3px var(--green-glow); }
+.h-dot-onhold     { background: var(--purple); box-shadow: 0 0 0 3px var(--purple-bg); }
+.h-dot-completed  { background: var(--green);  box-shadow: 0 0 0 3px var(--green-glow); }
+.h-dot-rejected   { background: var(--red);    box-shadow: 0 0 0 3px var(--red-bg); }
+
+.history-label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.history-meta {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text3);
+  margin-top: 2px;
+}
+
 /* ── Last updated ─────────────────────────────── */
 .last-updated {
   font-size: 10px;
