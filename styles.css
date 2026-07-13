@@ -22,6 +22,8 @@
   --orange-bg: rgba(249,115,22,.13);
   --purple:    #a855f7;
   --purple-bg: rgba(168,85,247,.13);
+  --cyan:      #22d3ee;
+  --cyan-bg:   rgba(34,211,238,.13);
   --text:      #d6edd9;
   --text2:     #7aaa87;
   --text3:     #4a7558;
@@ -539,6 +541,7 @@ body {
 .stat-value.y { color: var(--yellow); }
 .stat-value.r { color: var(--red); }
 .stat-value.b { color: var(--blue); }
+.stat-value.c { color: var(--cyan); }
 
 /* ── Board ────────────────────────────────────── */
 .board {
@@ -1269,6 +1272,9 @@ body {
 
 /* ── Status badges ────────────────────────────── */
 .s-no-ref { background: var(--orange-bg); color: var(--orange); }
+.s-closed { background: var(--cyan-bg);   color: var(--cyan);   }
+
+.email-closed-card { border-left: 3px solid var(--cyan); }
 
 /* ── Card top row & list type badge ──────────── */
 .card-top-row {

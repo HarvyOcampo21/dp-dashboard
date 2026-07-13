@@ -35,7 +35,7 @@ var S = {
 };
 
 // ─── Tabs to exclude from editor board/tabs ───────────────────────────────────
-var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments'];
+var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments', 'Email Closed'];
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -469,7 +469,7 @@ function applyRange() {
 }
 
 function rowInRange(row) {
-  var raw = row['Date Uploaded'] || row['Received Date'] || row['Date'];
+  var raw = row['Date Uploaded'] || row['Received Date'] || row['Date'] || row['Time Closed'];
   if (!raw) return true;
 
   var d = new Date(raw);
@@ -547,6 +547,23 @@ function rowMatch(r) {
     .some(function(f) { return r[f] && String(r[f]).toLowerCase().includes(s); });
 }
 
+// Email Closed rows live in their own tab with a different shape (no Ref,
+// Category, etc.), so they're gathered separately from getRows() rather than
+// forced through the same listing-shaped filter pipeline. Still respects the
+// current editor tab, date range, and search box (matched against Subject).
+function getEmailClosedRows(editor) {
+  var all  = S.data['Email Closed'] || [];
+  var base = editor === 'all'
+    ? all
+    : all.filter(function(r) { return String(r['Editor'] || '').trim() === editor; });
+
+  return base.filter(function(r) {
+    if (!rowInRange(r)) return false;
+    if (S.search && !(r['Subject'] && String(r['Subject']).toLowerCase().indexOf(S.search) !== -1)) return false;
+    return true;
+  });
+}
+
 // ─── Render dispatcher ────────────────────────────────────────────────────────
 function render() {
   renderTabs();
@@ -602,11 +619,18 @@ function renderStats(rows) {
   var rejected = rows.filter(function(r) { return norm(r['Status']) === 'rejected'; }).length;
   var other    = total - uploaded - pending - rejected;
 
+  var emailClosed = getEmailClosedRows(S.editor).length;
+  // Total includes Email Closed (unlike Uploaded/Pending/Rejected/Other,
+  // which stay listing-only) — computed from the un-inflated `total` above
+  // so it doesn't skew the Other bucket.
+  var grandTotal = total + emailClosed;
+
   var items = [
-    { label:'Total',    val: total,    cls:'' },
-    { label:'Uploaded', val: uploaded, cls:'g' },
-    { label:'Pending',  val: pending,  cls:'y' },
-    { label:'Rejected', val: rejected, cls:'r' },
+    { label:'Total',        val: grandTotal,  cls:''  },
+    { label:'Uploaded',     val: uploaded,     cls:'g' },
+    { label:'Pending',      val: pending,      cls:'y' },
+    { label:'Rejected',     val: rejected,     cls:'r' },
+    { label:'Email Closed', val: emailClosed,  cls:'c' },
   ];
 
   if (other > 0) items.push({ label:'Other', val: other, cls:'b' });
@@ -647,7 +671,9 @@ function renderBoard(rows) {
   var board = document.getElementById('boardView');
   board.innerHTML = '';
 
-  if (rows.length === 0) {
+  var emailClosedAll = getEmailClosedRows(S.editor);
+
+  if (rows.length === 0 && emailClosedAll.length === 0) {
     board.innerHTML = '<div class="no-results">No listings match the current filters.</div>';
     return;
   }
@@ -656,7 +682,8 @@ function renderBoard(rows) {
     var ordered = getOrderedEditors();
     ordered.forEach(function(editor) {
       var edRows = rows.filter(function(r) { return r._editor === editor; });
-      board.appendChild(makeColumn(editor, edRows));
+      var edEmailClosed = getEmailClosedRows(editor);
+      board.appendChild(makeColumn(editor, edRows, edEmailClosed));
     });
     initDragColumns(board);
   } else {
@@ -671,12 +698,20 @@ function renderBoard(rows) {
       var sRows = rows.filter(function(r) { return (r['Status'] || '—') === status; });
       board.appendChild(makeColumn(status, sRows));
     });
+    // Email Closed entries have no Status, so they don't belong in any of the
+    // status columns above — they get their own column instead, same as any
+    // other status bucket, only shown when this editor actually has any.
+    if (emailClosedAll.length) {
+      board.appendChild(makeColumn('Email Closed', [], emailClosedAll));
+    }
   }
 }
 
-function makeColumn(title, rows) {
+function makeColumn(title, rows, emailClosedRows) {
+  emailClosedRows = emailClosedRows || [];
   var col = document.createElement('div');
-  var isEmpty = rows.length === 0;
+  var totalCount = rows.length + emailClosedRows.length;
+  var isEmpty = totalCount === 0;
   col.className = 'col ' + (isEmpty ? 'collapsed' : 'open');
 
   var header = document.createElement('div');
@@ -685,7 +720,7 @@ function makeColumn(title, rows) {
     + '<span class="col-drag-handle" title="Drag to reorder">⠿</span>'
     + '<span class="col-name">' + esc(title) + '</span>'
     + '</div>'
-    + '<span class="col-count">' + rows.length + '</span>';
+    + '<span class="col-count">' + totalCount + '</span>';
 
   // Click anywhere on header (except drag handle) to collapse/expand
   header.addEventListener('click', function(e) {
@@ -700,15 +735,50 @@ function makeColumn(title, rows) {
   var body = document.createElement('div');
   body.className = 'col-body';
 
-  if (rows.length === 0) {
+  if (totalCount === 0) {
     body.innerHTML = '<div class="col-empty">No listings</div>';
   } else {
-    sortNewest(rows).forEach(function(row) { body.appendChild(makeCard(row)); });
+    // Merge listing cards and Email Closed cards into one chronological
+    // feed (newest first) rather than showing Email Closed as a separate
+    // block, so a column reads as "everything this editor did, in order."
+    var merged = rows.map(function(r) {
+      return { kind: 'listing', row: r, date: parseAnyDate(r['Date Uploaded']) };
+    }).concat(emailClosedRows.map(function(r) {
+      return { kind: 'emailClosed', row: r, date: parseAnyDate(r['Time Closed']) };
+    }));
+
+    merged.sort(function(a, b) {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return b.date - a.date;
+    });
+
+    merged.forEach(function(item) {
+      body.appendChild(item.kind === 'emailClosed' ? makeEmailClosedCard(item.row) : makeCard(item.row));
+    });
   }
 
   col.appendChild(header);
   col.appendChild(body);
   return col;
+}
+
+function makeEmailClosedCard(row) {
+  var card = document.createElement('div');
+  card.className = 'listing-card email-closed-card';
+
+  card.innerHTML =
+    '<div class="card-top-row">'
+    +   '<div class="card-req">📧 Email</div>'
+    + '</div>'
+    + '<div class="card-loc">' + esc(row['Subject'] || '—') + '</div>'
+    + '<div class="card-footer">'
+    +   '<span class="card-date">' + esc(fmtDateFull(row['Time Closed'])) + '</span>'
+    +   '<span class="sbadge s-closed">Closed</span>'
+    + '</div>';
+
+  return card;
 }
 
 function makeCard(row) {
@@ -889,7 +959,7 @@ function openModal(row) {
 
   html += '</div>';
 
-  html += buildHistorySectionHtml(row['DP-REQ Number']);
+  html += buildHistorySectionHtml(row['Listing Reference']);
 
   if (row._editor) {
     html += '<div class="modal-editor">Editor tab: ' + esc(row._editor) + '</div>';
@@ -900,7 +970,7 @@ function openModal(row) {
 }
 
 // ─── Assigner history (from the merged "Assignments" tab) ─────────────────────
-// Joined on DP-REQ Number (Copier) === Ref (Assigner) — same DP-REQ-xxxxx value
+// Joined on Listing Reference (Copier) === Ref (Assigner) — same DP-R/DP-S value
 // in both sheets. Builds a chronological dot timeline from whichever of
 // Assigned/Reassigned/Started/On Hold/Completed/Rejected the matched row has.
 function buildHistorySectionHtml(ref) {
@@ -1262,6 +1332,10 @@ function renderReport() {
   var actualProfile   = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Profile'],  10)||0); }, 0);
   var actualOthers    = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0); }, 0);
 
+  // Email Closed — unlike Lifestyle/Profile/Others, this DOES roll into Total
+  // (see editorBreakdown/team below), per how it's meant to read next to Rejected.
+  var emailClosedRows = (S.data['Email Closed'] || []).filter(rowInRange);
+
   var incoming = getIncomingForRange();
   var expPhoto = incoming ? (parseInt(incoming['Photo Request'],10)||0) : null;
   var expAgent = incoming ? (parseInt(incoming['Agent Request'],10)||0) : null;
@@ -1294,32 +1368,37 @@ function renderReport() {
     var rows    = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor},r); }).filter(rowInRange);
     var nonRej  = rows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
     var lRows   = lifestyleRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
+    var ecRows  = emailClosedRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
     return {
-      editor:    editor,
-      photo:     nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
-      agent:     nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
-      broch:     nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
-      rejected:  rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
-      lifestyle: lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
-      profile:   lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
-      others:    lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
-      total:     rows.length,
+      editor:      editor,
+      photo:       nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
+      agent:       nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
+      broch:       nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
+      rejected:    rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
+      emailClosed: ecRows.length,
+      lifestyle:   lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
+      profile:     lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
+      others:      lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
+      // Email Closed rolls into Total (unlike Lifestyle/Profile/Others, which
+      // are tracked separately) — per how it's meant to sit next to Rejected.
+      total:       rows.length + ecRows.length,
     };
   }).filter(function(r) { return r.total + r.lifestyle + r.profile + r.others > 0; })
     .sort(function(a,b) { return (b.total+b.lifestyle+b.profile+b.others)-(a.total+a.lifestyle+a.profile+a.others); });
 
   var team = editorBreakdown.reduce(function(s,r) {
     return {
-      photo:     s.photo     + r.photo,
-      agent:     s.agent     + r.agent,
-      broch:     s.broch     + r.broch,
-      rejected:  s.rejected  + r.rejected,
-      lifestyle: s.lifestyle + r.lifestyle,
-      profile:   s.profile   + r.profile,
-      others:    s.others    + r.others,
-      total:     s.total     + r.total,
+      photo:       s.photo       + r.photo,
+      agent:       s.agent       + r.agent,
+      broch:       s.broch       + r.broch,
+      rejected:    s.rejected    + r.rejected,
+      emailClosed: s.emailClosed + r.emailClosed,
+      lifestyle:   s.lifestyle   + r.lifestyle,
+      profile:     s.profile     + r.profile,
+      others:      s.others      + r.others,
+      total:       s.total       + r.total,
     };
-  }, {photo:0,agent:0,broch:0,rejected:0,lifestyle:0,profile:0,others:0,total:0});
+  }, {photo:0,agent:0,broch:0,rejected:0,emailClosed:0,lifestyle:0,profile:0,others:0,total:0});
 
   function num(v, color) {
     var style = color ? ' style="color:' + color + '"' : '';
@@ -1331,13 +1410,14 @@ function renderReport() {
       + '<td class="editor-name">' + esc(r.editor) + '</td>'
       + num(r.photo) + num(r.agent) + num(r.broch)
       + num(r.rejected, r.rejected > 0 ? 'var(--red)' : null)
+      + num(r.emailClosed, r.emailClosed > 0 ? 'var(--cyan)' : null)
       + num(r.lifestyle,'var(--purple)') + num(r.profile,'var(--blue)') + num(r.others,'var(--orange)')
       + num(r.total)
       + '</tr>';
   }).join('');
 
-  // colspan for pending/rate rows = 7 (photo+agent+offplan+rejected+lifestyle+profile+others)
-  var footColspan = '7';
+  // colspan for pending/rate rows = 8 (photo+agent+offplan+rejected+emailClosed+lifestyle+profile+others)
+  var footColspan = '8';
 
   wrap.innerHTML =
     '<div class="report-header">'
@@ -1378,6 +1458,7 @@ function renderReport() {
     +     '<th>Editor</th><th>Photo</th><th>Agent</th><th>Offplan</th>'
     // FEATURE 2 — Rejected column between Offplan and Lifestyle
     +     '<th style="color:var(--red)">Rejected</th>'
+    +     '<th style="color:var(--cyan)">Email Closed</th>'
     +     '<th style="color:var(--purple)">Lifestyle</th>'
     +     '<th style="color:var(--blue)">Profile</th>'
     +     '<th style="color:var(--orange)">Others</th>'
@@ -1388,6 +1469,7 @@ function renderReport() {
     +   '<tr class="team-total"><td>Team Total</td>'
     +     num(team.photo) + num(team.agent) + num(team.broch)
     +     num(team.rejected, team.rejected > 0 ? 'var(--red)' : null)
+    +     num(team.emailClosed, team.emailClosed > 0 ? 'var(--cyan)' : null)
     +     num(team.lifestyle,'var(--purple)') + num(team.profile,'var(--blue)') + num(team.others,'var(--orange)')
     +     num(team.total)
     +   '</tr>'
