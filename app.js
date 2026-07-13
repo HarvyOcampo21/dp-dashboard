@@ -959,7 +959,7 @@ function openModal(row) {
 
   html += '</div>';
 
-  html += buildHistorySectionHtml(row['Listing Reference']);
+    html += buildHistorySectionHtml(row['DP-REQ Number']);
 
   if (row._editor) {
     html += '<div class="modal-editor">Editor tab: ' + esc(row._editor) + '</div>';
