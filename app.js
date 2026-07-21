@@ -55,9 +55,9 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   // ── View toggle ──────────────────────────────────────────────────────────────
-  document.querySelectorAll('.v-btn').forEach(function(btn) {
+  document.querySelectorAll('.v-btn[data-view]').forEach(function(btn) {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('.v-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.v-btn[data-view]').forEach(function(b) { b.classList.remove('active'); });
       btn.classList.add('active');
       S.view = btn.dataset.view;
       render();
@@ -124,6 +124,11 @@ document.addEventListener('DOMContentLoaded', function() {
   // ── Amenities modal ───────────────────────────────────────────────────────
   document.getElementById('amenitiesBtn').addEventListener('click', function() {
     openAmenitiesModal();
+  });
+
+  // ── Assignment Dashboard modal ────────────────────────────────────────────
+  document.getElementById('assignDashBtn').addEventListener('click', function() {
+    openAssignDashModal();
   });
 
   // ── Incoming requests edit ────────────────────────────────────────────────
@@ -2141,4 +2146,391 @@ function clearFilters() {
 
   updateFilterBadge();
   render();
+}
+// ═══════════════════════════════════════════════════════════════════════
+// ASSIGNMENT DASHBOARD
+// Ported from the DP Toolkit Chrome extension's "Assignment Dashboard".
+// Reads the same "Assignments" tab through the same Apps Script deployment
+// this app already uses (S.url), via the token-authenticated GET endpoint
+// (?token=DPPE) — the same one the extension itself calls — rather than
+// the ?action=getData endpoint the rest of this dashboard uses for the
+// Copier sheet data.
+// ═══════════════════════════════════════════════════════════════════════
+
+var ASSIGN_TOKEN = 'DPPE';
+var ASSIGN_CATEGORY_OPTIONS = ['Offplan Pending', 'Photos For QC', 'Stock Photos For QC', 'Upload Pending', 'Re-shoot'];
+var ASSIGN_BED_TRACKED_CATEGORIES = ['Upload Pending'];
+var ASSIGN_BED_BUCKETS = ['0', '1', '2', '3', '4', '5+', '?'];
+var ASSIGN_DATA = { assignments: [], loaded: false };
+var ASSIGN_SCOPE = 'today'; // 'today' | 'yesterday' | 'week' | 'all' | { type:'custom', start, end }
+var ASSIGN_CUSTOM_DRAFT = { start: '', end: '' };
+
+function assignBedroomChipLabel(val) { return val === '0' ? 'Studio' : val === '?' ? 'Unknown' : val; }
+
+function assignFmtRelative(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d)) return '';
+  var mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.round(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.round(hrs / 24) + 'd ago';
+}
+
+function assignStartOfLocalDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function assignAddDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+
+// Turns a scope descriptor into a [start, end) local-time range, or null
+// for "all" (no filtering). Mirrors the extension's scopeToRange exactly,
+// including "week" being a rolling last-7-days window ending yesterday.
+function assignScopeToRange(scope) {
+  var now = new Date();
+  if (scope === 'today') {
+    var s1 = assignStartOfLocalDay(now);
+    return [s1, assignAddDays(s1, 1)];
+  }
+  if (scope === 'yesterday') {
+    var s2 = assignAddDays(assignStartOfLocalDay(now), -1);
+    return [s2, assignAddDays(s2, 1)];
+  }
+  if (scope === 'week') {
+    var yest = assignAddDays(assignStartOfLocalDay(now), -1);
+    var s3 = assignAddDays(yest, -6);
+    return [s3, assignAddDays(yest, 1)];
+  }
+  if (scope && scope.type === 'custom') {
+    if (!scope.start || !scope.end) return null;
+    var s4 = new Date(scope.start + 'T00:00:00');
+    var e4 = new Date(scope.end + 'T00:00:00');
+    if (isNaN(s4) || isNaN(e4)) return null;
+    return [s4, assignAddDays(e4, 1)];
+  }
+  return null; // "all"
+}
+
+function assignIsWithinRange(iso, range) {
+  if (!range) return true;
+  if (!iso) return false;
+  var d = new Date(iso);
+  if (isNaN(d)) return false;
+  return d >= range[0] && d < range[1];
+}
+
+// Collapses whitespace (including non-breaking spaces picked up from the
+// CRM page's DOM text) before comparing a stored Category value against
+// ASSIGN_CATEGORY_OPTIONS.
+function assignNormCategory(v) { return (v || '').replace(/\s+/g, ' ').trim(); }
+
+function assignEmptyCategoryTally() {
+  var t = {};
+  ASSIGN_CATEGORY_OPTIONS.forEach(function(c) { t[c] = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0, beds: {} }; });
+  return t;
+}
+
+function computeAssignDashboardStats(scope) {
+  var range = assignScopeToRange(scope);
+  var byEditor = {};
+  var team = { categories: assignEmptyCategoryTally(), total: 0 };
+  var unassigned = { categories: assignEmptyCategoryTally(), total: 0, latest: null };
+  var uncategorized = 0;
+
+  ASSIGN_DATA.assignments.forEach(function(entry) {
+    if (!entry || !entry.status) return;
+
+    // Unassigned-but-on-hold listings have no assignedAt — use onHoldAt
+    // instead so date-range scoping still works for them.
+    var scopeTimestamp = entry.assignedAt || entry.onHoldAt || '';
+    if (!assignIsWithinRange(scopeTimestamp, range)) return;
+
+    var bedBucket = entry.bedrooms || '';
+    var crmNorm = assignNormCategory(entry.crmStatus);
+    var category = (crmNorm && ASSIGN_CATEGORY_OPTIONS.indexOf(crmNorm) > -1) ? crmNorm : '';
+    if (!category) { uncategorized++; return; } // not one of the tracked categories — excluded
+    if (!bedBucket) bedBucket = '?';
+
+    var editor = entry.editor || '';
+    var status = entry.status || '';
+    var bucket = status === 'Completed' ? 'completed' : status === 'Rejected' ? 'rejected' :
+      status === 'On Hold' ? 'onHold' : 'pending';
+
+    var target = editor
+      ? (byEditor[editor] || (byEditor[editor] = { total: 0, latest: null, categories: assignEmptyCategoryTally() }))
+      : unassigned;
+
+    target.total++;
+    target.categories[category][bucket]++;
+    target.categories[category].total++;
+
+    if (editor) {
+      team.categories[category][bucket]++;
+      team.categories[category].total++;
+      team.total++;
+    }
+
+    if (ASSIGN_BED_TRACKED_CATEGORIES.indexOf(category) > -1) {
+      target.categories[category].beds[bedBucket] = (target.categories[category].beds[bedBucket] || 0) + 1;
+      if (editor) team.categories[category].beds[bedBucket] = (team.categories[category].beds[bedBucket] || 0) + 1;
+    }
+
+    if (scopeTimestamp && (!target.latest || new Date(scopeTimestamp) > new Date(target.latest.assignedAt))) {
+      target.latest = { ref: entry.ref, bedBucket: bedBucket, crmStatus: category, assignedAt: scopeTimestamp };
+    }
+  });
+
+  return { byEditor: byEditor, team: team, unassigned: unassigned, uncategorized: uncategorized };
+}
+
+// ── HTML builders (string-based, matching renderReport()'s style; reuses
+// the .report-table / .report-table-wrap classes already defined for the
+// RPT view so this looks native to the rest of the dashboard) ────────────
+
+function assignNumCell(v) {
+  return '<td class="num-cell' + (v === 0 ? ' num-zero' : '') + '">' + (v || '\u2013') + '</td>';
+}
+
+function assignCategoryTableHtml(categories) {
+  var sums = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+  var rows = ASSIGN_CATEGORY_OPTIONS.map(function(cat) {
+    var d = categories[cat] || { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+    sums.completed += d.completed; sums.pending += d.pending; sums.onHold += d.onHold;
+    sums.rejected += d.rejected; sums.total += d.total;
+    return '<tr>'
+      + '<td class="editor-name">' + esc(cat) + '</td>'
+      + assignNumCell(d.completed) + assignNumCell(d.pending) + assignNumCell(d.onHold) + assignNumCell(d.rejected)
+      + assignNumCell(d.total)
+      + '</tr>';
+  }).join('');
+
+  return '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
+    + '<th>Category</th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
+    + '</tr></thead><tbody>'
+    + rows
+    + '<tr class="team-total"><td>Total</td>'
+    + assignNumCell(sums.completed) + assignNumCell(sums.pending) + assignNumCell(sums.onHold) + assignNumCell(sums.rejected)
+    + assignNumCell(sums.total)
+    + '</tr></tbody></table></div>';
+}
+
+function assignBedTableHtml(beds, rowLabel) {
+  var total = 0;
+  var cells = ASSIGN_BED_BUCKETS.map(function(b) {
+    var count = beds[b] || 0;
+    total += count;
+    return assignNumCell(count);
+  }).join('');
+  var headCells = ASSIGN_BED_BUCKETS.map(function(b) { return '<th>' + assignBedroomChipLabel(b) + '</th>'; }).join('');
+  return '<div class="report-table-wrap" style="margin-top:8px;"><table class="report-table"><thead><tr>'
+    + '<th></th>' + headCells + '<th>Total</th>'
+    + '</tr></thead><tbody><tr>'
+    + '<td class="editor-name">' + esc(rowLabel) + '</td>' + cells + assignNumCell(total)
+    + '</tr></tbody></table></div>';
+}
+
+function assignBedTablesHtml(categories) {
+  var html = '';
+  ASSIGN_BED_TRACKED_CATEGORIES.forEach(function(cat) {
+    var beds = categories[cat] && categories[cat].beds;
+    if (!beds || Object.keys(beds).length === 0) return;
+    html += '<div class="dp-bed-table-title">' + esc(cat) + ' \u2014 by bedrooms</div>' + assignBedTableHtml(beds, cat);
+  });
+  return html;
+}
+
+function assignLatestLineHtml(latest) {
+  if (!latest) return '';
+  var bedLabel = assignBedroomChipLabel(latest.bedBucket) + (latest.bedBucket === '?' ? '' : ' Bed');
+  var bits = [latest.ref || '\u2014'];
+  if (ASSIGN_BED_TRACKED_CATEGORIES.indexOf(latest.crmStatus) > -1) bits.push(bedLabel);
+  bits.push(latest.crmStatus, assignFmtRelative(latest.assignedAt));
+  return '<div class="dp-dash-latest">Latest: ' + esc(bits.join(' \u00B7 ')) + '</div>';
+}
+
+function assignCardHtml(title, data, isTeam) {
+  return '<div class="dp-dash-card' + (isTeam ? ' team' : '') + '">'
+    + '<div class="dp-dash-card-head">'
+    +   '<div class="dp-dash-card-title">' + esc(title) + '</div>'
+    +   '<div class="dp-dash-card-total">Total: ' + data.total + '</div>'
+    + '</div>'
+    + assignLatestLineHtml(data.latest)
+    + assignCategoryTableHtml(data.categories)
+    + assignBedTablesHtml(data.categories)
+    + '</div>';
+}
+
+// ── Scope labels & date display ───────────────────────────────────────────
+
+function assignTrackedCategoriesText() { return '(' + ASSIGN_CATEGORY_OPTIONS.join(', ') + ')'; }
+
+function assignScopeLabelText(s) {
+  if (s === 'today') return 'assigned today';
+  if (s === 'yesterday') return 'assigned yesterday';
+  if (s === 'week') return 'assigned in the last 7 days';
+  if (s === 'all') return 'assigned (all time)';
+  if (s && s.type === 'custom') return 'assigned from ' + s.start + ' to ' + s.end;
+  return 'assigned';
+}
+
+function assignEmptyLabelText(s) {
+  var suffix = 'in one of the tracked categories ' + assignTrackedCategoriesText() + '.';
+  if (s === 'today') return 'No listings assigned or put on hold today ' + suffix;
+  if (s === 'yesterday') return 'No listings assigned or put on hold yesterday ' + suffix;
+  if (s === 'week') return 'No listings assigned or put on hold in the last 7 days ' + suffix;
+  if (s === 'all') return 'No assigned or on-hold listings found ' + suffix;
+  if (s && s.type === 'custom') return 'No listings assigned or put on hold in that date range ' + suffix;
+  return 'No listings found ' + suffix;
+}
+
+function assignFmtFullDate(d) {
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+function assignFmtShortDate(d, includeYear) {
+  var opts = { month: 'short', day: 'numeric' };
+  if (includeYear) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+function assignDateInfoText(s) {
+  if (s === 'all') return '';
+  var range = assignScopeToRange(s);
+  if (!range) return '';
+  var startDate = range[0];
+  var endDate = assignAddDays(range[1], -1); // range end is exclusive
+  if (s === 'today' || s === 'yesterday') return assignFmtFullDate(startDate);
+  var sameYear = startDate.getFullYear() === endDate.getFullYear();
+  return assignFmtShortDate(startDate, !sameYear) + ' \u2013 ' + assignFmtShortDate(endDate, true);
+}
+
+// ── Modal render / wiring ─────────────────────────────────────────────────
+
+function renderAssignDashboard() {
+  var inner = document.getElementById('assignDashInner');
+  if (!inner) return;
+  var scope = ASSIGN_SCOPE;
+  var isCustom = !!(scope && scope.type === 'custom');
+
+  function pillClass(active) { return 'fp-t-pill' + (active ? ' active' : ''); }
+
+  var scopeRowHtml =
+    '<div class="fp-time-pills" id="assignScopePills">'
+    + '<button type="button" class="' + pillClass(scope === 'today') + '" data-scope="today">Today</button>'
+    + '<button type="button" class="' + pillClass(scope === 'yesterday') + '" data-scope="yesterday">Yesterday</button>'
+    + '<button type="button" class="' + pillClass(scope === 'week') + '" data-scope="week">Last 7 Days</button>'
+    + '<button type="button" class="' + pillClass(scope === 'all') + '" data-scope="all">All time</button>'
+    + '<button type="button" class="' + pillClass(isCustom) + '" data-scope="custom">Custom Range</button>'
+    + '</div>';
+
+  var customRangeHtml =
+    '<div class="fp-date-row" id="assignCustomRow" style="display:' + (isCustom ? 'flex' : 'none') + ';margin-top:10px;">'
+    + '<input type="date" id="assignDateFrom" class="fp-date-in" title="From" value="' + esc(ASSIGN_CUSTOM_DRAFT.start) + '">'
+    + '<span class="fp-date-sep">\u2192</span>'
+    + '<input type="date" id="assignDateTo" class="fp-date-in" title="To" value="' + esc(ASSIGN_CUSTOM_DRAFT.end) + '">'
+    + '<button class="fp-apply-date" id="assignApplyRangeBtn" type="button">Apply</button>'
+    + '</div>';
+
+  var dateText = assignDateInfoText(scope);
+  var dateInfoHtml = dateText ? '<div class="dp-dash-date-info">' + esc(dateText) + '</div>' : '';
+
+  var headerHtml =
+    '<div class="modal-head">'
+    +   '<div>'
+    +     '<div class="modal-req" style="font-size:16px;">\uD83D\uDCCA Assignment Dashboard</div>'
+    +     '<div class="modal-ref">From the Assignments tab \u2014 same data as the CRM extension</div>'
+    +   '</div>'
+    +   '<button class="modal-close" onclick="document.getElementById(\'assignDashBg\').style.display=\'none\'">\u2715</button>'
+    + '</div>'
+    + scopeRowHtml + customRangeHtml + dateInfoHtml;
+
+  if (isCustom && !assignScopeToRange(scope)) {
+    inner.innerHTML = headerHtml + '<div class="dp-dash-summary">Pick a start and end date, then Apply.</div>';
+    assignWireDashboardControls();
+    return;
+  }
+
+  if (!ASSIGN_DATA.loaded) {
+    inner.innerHTML = headerHtml + '<div class="dp-dash-empty">Loading assignment data\u2026</div>';
+    assignWireDashboardControls();
+    return;
+  }
+
+  var stats = computeAssignDashboardStats(scope);
+  var byEditor = stats.byEditor, team = stats.team, unassigned = stats.unassigned, uncategorized = stats.uncategorized;
+
+  var summary = team.total + ' assigned listing' + (team.total === 1 ? '' : 's') + ' ' + assignScopeLabelText(scope)
+    + ' across the ' + ASSIGN_CATEGORY_OPTIONS.length + ' tracked categories ' + assignTrackedCategoriesText();
+  if (unassigned.total > 0) {
+    summary += ', plus ' + unassigned.total + ' unassigned listing' + (unassigned.total === 1 ? '' : 's') + ' on hold';
+  }
+  summary += ' \u2014 data pulled from the sheet.';
+  if (uncategorized > 0) {
+    summary += ' ' + uncategorized + ' listing' + (uncategorized === 1 ? '' : 's') + ' excluded \u2014 not one of the '
+      + ASSIGN_CATEGORY_OPTIONS.length + ' tracked categories, or the category was never captured.';
+  }
+
+  var editorNames = Object.keys(byEditor).sort(function(a, b) { return byEditor[b].total - byEditor[a].total; });
+
+  var bodyHtml;
+  if (editorNames.length === 0 && unassigned.total === 0) {
+    bodyHtml = '<div class="dp-dash-empty">' + esc(assignEmptyLabelText(scope)) + '</div>';
+  } else {
+    bodyHtml = '<div class="dp-dash-body">';
+    if (team.total > 0) bodyHtml += assignCardHtml('Whole Team', team, true);
+    if (unassigned.total > 0) bodyHtml += assignCardHtml('Unassigned (On Hold)', unassigned, false);
+    editorNames.forEach(function(name) { bodyHtml += assignCardHtml(name, byEditor[name], false); });
+    bodyHtml += '</div>';
+  }
+
+  inner.innerHTML = headerHtml + '<div class="dp-dash-summary">' + esc(summary) + '</div>' + bodyHtml;
+  assignWireDashboardControls();
+}
+
+function assignWireDashboardControls() {
+  document.querySelectorAll('#assignScopePills [data-scope]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var next = btn.dataset.scope;
+      if (next === 'custom') {
+        ASSIGN_SCOPE = { type: 'custom', start: ASSIGN_CUSTOM_DRAFT.start, end: ASSIGN_CUSTOM_DRAFT.end };
+      } else {
+        ASSIGN_SCOPE = next;
+      }
+      renderAssignDashboard();
+    });
+  });
+  var applyBtn = document.getElementById('assignApplyRangeBtn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', function() {
+      ASSIGN_CUSTOM_DRAFT = {
+        start: document.getElementById('assignDateFrom').value,
+        end: document.getElementById('assignDateTo').value,
+      };
+      ASSIGN_SCOPE = { type: 'custom', start: ASSIGN_CUSTOM_DRAFT.start, end: ASSIGN_CUSTOM_DRAFT.end };
+      renderAssignDashboard();
+    });
+  }
+}
+
+function fetchAssignData(cb) {
+  fetch(S.url + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      ASSIGN_DATA.assignments = (data && Array.isArray(data.assignments)) ? data.assignments : [];
+      ASSIGN_DATA.loaded = true;
+      if (cb) cb(null);
+    })
+    .catch(function(err) {
+      console.error('Assignment Dashboard fetch failed', err);
+      if (cb) cb(err);
+    });
+}
+
+function openAssignDashModal() {
+  document.getElementById('assignDashBg').style.display = 'flex';
+  renderAssignDashboard(); // show something immediately (loading state)
+  fetchAssignData(function() { renderAssignDashboard(); });
+}
+
+function closeAssignDashModal(e) {
+  if (e.target === document.getElementById('assignDashBg')) {
+    document.getElementById('assignDashBg').style.display = 'none';
+  }
 }
