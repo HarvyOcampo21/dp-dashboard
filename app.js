@@ -119,6 +119,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('refreshBtn').addEventListener('click', function() {
     fetchData();
+    if (S.view === 'assigndash') fetchAssignData(function() { renderAssignDashboard(); });
   });
 
   // ── Amenities modal ───────────────────────────────────────────────────────
@@ -152,7 +153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (S.url && document.visibilityState === 'visible') {
       fetchData(true);
     }
-  }, 20000); // fast — Apps Script CacheService ~100ms
+  }, 8000); // Apps Script CacheService responds in ~100ms, so this is cheap to poll often
 
 });
 
@@ -582,7 +583,7 @@ function render() {
     return; // the assignment dashboard manages its own re-renders (scope pills, clock, fetch)
   }
 
-  if (wasAssignDash) { ASSIGN_DASH_VIEW_ACTIVE = false; assignStopClock(); }
+  if (wasAssignDash) { ASSIGN_DASH_VIEW_ACTIVE = false; assignStopClock(); assignStopPoll(); }
   hide('assignDashView');
 
   if (S.view === 'board') {
@@ -2173,6 +2174,7 @@ var ASSIGN_BED_TRACKED_CATEGORIES = ['Upload Pending'];
 var ASSIGN_BED_BUCKETS = ['0', '1', '2', '3', '4', '5+', '?'];
 var ASSIGN_DATA = { assignments: [], loaded: false };
 var ASSIGN_DASH_VIEW_ACTIVE = false;
+var ASSIGN_POLL_INTERVAL = null;
 var ASSIGN_SCOPE = 'today'; // 'today' | 'yesterday' | 'week' | 'all' | { type:'custom', start, end }
 var ASSIGN_CUSTOM_DRAFT = { start: '', end: '' };
 var ASSIGN_CLOCK_INTERVAL = null;
@@ -2532,6 +2534,30 @@ function assignDateInfoText(s) {
 
 // ── Modal render / wiring ─────────────────────────────────────────────────
 
+// Fixed id for the DP Toolkit Chrome extension (pinned via a "key" in its
+// manifest.json specifically so this stays stable across every teammate's
+// install — see the manifest for the matching public key). Lets DP Studio,
+// a plain website, ask the *extension* to do the tab-switching/searching
+// that only an extension's chrome.tabs access can do.
+var DP_TOOLKIT_EXTENSION_ID = 'fnldgmmjlbpogkecndmccfbboakhgdai';
+
+function assignAutoSearchInCRM(ref, actionEl) {
+  if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) return;
+  try {
+    chrome.runtime.sendMessage(DP_TOOLKIT_EXTENSION_ID, { type: 'DP_AUTO_SEARCH', ref: ref }, function(resp) {
+      // chrome.runtime.lastError fires when the extension isn't installed,
+      // is disabled, or hasn't picked up the externally_connectable update
+      // yet — none of that should surprise the person, the ref is already
+      // copied to their clipboard either way, so just leave it there.
+      if (chrome.runtime.lastError) return;
+      if (resp && resp.ok && actionEl) {
+        actionEl.textContent = 'Opened in CRM \u2713';
+        setTimeout(function() { if (actionEl) actionEl.textContent = 'Copy'; }, 1800);
+      }
+    });
+  } catch (e) { /* extension messaging unavailable — clipboard copy still worked */ }
+}
+
 function renderAssignDashboard() {
   var inner = document.getElementById('assignDashView');
   if (!inner) return;
@@ -2701,6 +2727,7 @@ function assignShowRefsModal(title, refs) {
   }
 
   bg.querySelectorAll('.dp-refs-list-item').forEach(function(item) {
+    item.title = 'Copy, and auto-search in the CRM if the DP Toolkit extension is installed';
     item.addEventListener('click', function() {
       var ref = item.getAttribute('data-ref');
       var actionEl = item.querySelector('.dp-refs-list-action');
@@ -2709,6 +2736,7 @@ function assignShowRefsModal(title, refs) {
           actionEl.textContent = 'Copied \u2713';
           setTimeout(function() { if (actionEl) actionEl.textContent = 'Copy'; }, 1200);
         }
+        assignAutoSearchInCRM(ref, actionEl);
       }).catch(function() {});
     });
   });
@@ -2725,11 +2753,20 @@ document.addEventListener('click', function(e) {
   if (entry) assignShowRefsModal(entry.title, entry.refs);
 });
 
-function fetchAssignData(cb) {
+function fetchAssignData(cb, silent) {
   fetch(S.url + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      ASSIGN_DATA.assignments = (data && Array.isArray(data.assignments)) ? data.assignments : [];
+      var next = (data && Array.isArray(data.assignments)) ? data.assignments : [];
+      // Silent (background poll) mode: skip the re-render entirely if the
+      // ref-list modal is open, so a mid-read refresh can't yank the list
+      // out from under someone, and skip it if nothing actually changed so
+      // there's no needless flicker/scroll-jump on every tick.
+      if (silent) {
+        if (document.getElementById('assignRefsBg')) { ASSIGN_DATA.assignments = next; ASSIGN_DATA.loaded = true; return; }
+        if (next.length === ASSIGN_DATA.assignments.length && JSON.stringify(next) === JSON.stringify(ASSIGN_DATA.assignments)) return;
+      }
+      ASSIGN_DATA.assignments = next;
       ASSIGN_DATA.loaded = true;
       if (cb) cb(null);
     })
@@ -2751,8 +2788,27 @@ function assignStopClock() {
   if (ASSIGN_CLOCK_INTERVAL) { clearInterval(ASSIGN_CLOCK_INTERVAL); ASSIGN_CLOCK_INTERVAL = null; }
 }
 
+// Background refresh while the dashboard tab is open — the extension's own
+// dashboard polls every 15s (REFRESH_INTERVAL_MS in assigner-content.js);
+// matched here so DP Studio doesn't lag behind it.
+var ASSIGN_POLL_MS = 8000;
+
+function assignStartPoll() {
+  assignStopPoll();
+  ASSIGN_POLL_INTERVAL = setInterval(function() {
+    if (document.visibilityState === 'visible' && ASSIGN_DASH_VIEW_ACTIVE) {
+      fetchAssignData(function() { renderAssignDashboard(); }, true);
+    }
+  }, ASSIGN_POLL_MS);
+}
+
+function assignStopPoll() {
+  if (ASSIGN_POLL_INTERVAL) { clearInterval(ASSIGN_POLL_INTERVAL); ASSIGN_POLL_INTERVAL = null; }
+}
+
 function openAssignDashboardView() {
   renderAssignDashboard(); // show something immediately (loading state)
   fetchAssignData(function() { renderAssignDashboard(); });
   assignStartClock();
+  assignStartPoll();
 }
