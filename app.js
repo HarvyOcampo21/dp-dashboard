@@ -126,11 +126,6 @@ document.addEventListener('DOMContentLoaded', function() {
     openAmenitiesModal();
   });
 
-  // ── Assignment Dashboard modal ────────────────────────────────────────────
-  document.getElementById('assignDashBtn').addEventListener('click', function() {
-    openAssignDashModal();
-  });
-
   // ── Incoming requests edit ────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
     if (e.target && e.target.id === 'editIncomingBtn') openIncomingModal();
@@ -574,6 +569,21 @@ function render() {
   renderTabs();
   var rows = getRows(S.editor);
   renderStats(rows);
+
+  var wasAssignDash = ASSIGN_DASH_VIEW_ACTIVE;
+  var isAssignDash = S.view === 'assigndash';
+
+  if (isAssignDash) {
+    hide('boardView'); hide('tableView'); hide('reportView'); show('assignDashView');
+    if (!wasAssignDash) {
+      ASSIGN_DASH_VIEW_ACTIVE = true;
+      openAssignDashboardView();
+    }
+    return; // the assignment dashboard manages its own re-renders (scope pills, clock, fetch)
+  }
+
+  if (wasAssignDash) { ASSIGN_DASH_VIEW_ACTIVE = false; assignStopClock(); }
+  hide('assignDashView');
 
   if (S.view === 'board') {
     show('boardView'); hide('tableView'); hide('reportView');
@@ -2162,8 +2172,10 @@ var ASSIGN_CATEGORY_OPTIONS = ['Offplan Pending', 'Photos For QC', 'Stock Photos
 var ASSIGN_BED_TRACKED_CATEGORIES = ['Upload Pending'];
 var ASSIGN_BED_BUCKETS = ['0', '1', '2', '3', '4', '5+', '?'];
 var ASSIGN_DATA = { assignments: [], loaded: false };
+var ASSIGN_DASH_VIEW_ACTIVE = false;
 var ASSIGN_SCOPE = 'today'; // 'today' | 'yesterday' | 'week' | 'all' | { type:'custom', start, end }
 var ASSIGN_CUSTOM_DRAFT = { start: '', end: '' };
+var ASSIGN_CLOCK_INTERVAL = null;
 
 function assignBedroomChipLabel(val) { return val === '0' ? 'Studio' : val === '?' ? 'Unknown' : val; }
 
@@ -2200,6 +2212,13 @@ function assignScopeToRange(scope) {
     var s3 = assignAddDays(yest, -6);
     return [s3, assignAddDays(yest, 1)];
   }
+  if (scope === 'thisweek') {
+    // Full calendar week, Monday through Sunday — not clipped to today.
+    // Mirrors the extension's startOfWeekMonday()/scopeToRange("thisWeek").
+    var day0 = assignStartOfLocalDay(now).getDay(); // 0=Sun..6=Sat
+    var monday = assignAddDays(assignStartOfLocalDay(now), -((day0 + 6) % 7));
+    return [monday, assignAddDays(monday, 7)];
+  }
   if (scope && scope.type === 'custom') {
     if (!scope.start || !scope.end) return null;
     var s4 = new Date(scope.start + 'T00:00:00');
@@ -2225,7 +2244,14 @@ function assignNormCategory(v) { return (v || '').replace(/\s+/g, ' ').trim(); }
 
 function assignEmptyCategoryTally() {
   var t = {};
-  ASSIGN_CATEGORY_OPTIONS.forEach(function(c) { t[c] = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0, beds: {} }; });
+  ASSIGN_CATEGORY_OPTIONS.forEach(function(c) {
+    t[c] = {
+      completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0, beds: {},
+      // Individual DP-REQ refs behind each count, so a cell's number can
+      // be clicked to reveal exactly which listings it's made of.
+      refs: { completed: [], pending: [], onHold: [], rejected: [] },
+    };
+  });
   return t;
 }
 
@@ -2262,10 +2288,12 @@ function computeAssignDashboardStats(scope) {
     target.total++;
     target.categories[category][bucket]++;
     target.categories[category].total++;
+    target.categories[category].refs[bucket].push(entry.ref);
 
     if (editor) {
       team.categories[category][bucket]++;
       team.categories[category].total++;
+      team.categories[category].refs[bucket].push(entry.ref);
       team.total++;
     }
 
@@ -2286,31 +2314,127 @@ function computeAssignDashboardStats(scope) {
 // the .report-table / .report-table-wrap classes already defined for the
 // RPT view so this looks native to the rest of the dashboard) ────────────
 
-function assignNumCell(v) {
+// Registry mapping a short id -> {title, refs}, rebuilt on every render so
+// the clickable stat buttons (wired via delegated click listener below,
+// since this dashboard is built from HTML strings rather than DOM nodes
+// with attached handlers) can look up which refs a given button represents.
+var ASSIGN_REFS_REGISTRY = {};
+var ASSIGN_REFS_COUNTER = 0;
+
+function assignRegisterRefs(title, refs) {
+  ASSIGN_REFS_COUNTER++;
+  var id = 'r' + ASSIGN_REFS_COUNTER;
+  ASSIGN_REFS_REGISTRY[id] = { title: title, refs: refs };
+  return id;
+}
+
+function assignNumCell(v, refs, title) {
+  if (v > 0 && refs && refs.length > 0) {
+    var id = assignRegisterRefs(title, refs);
+    return '<td class="num-cell"><button type="button" class="dp-dash-stat-btn" data-refs-id="' + id
+      + '" title="Click to see reference numbers">' + v + '</button></td>';
+  }
   return '<td class="num-cell' + (v === 0 ? ' num-zero' : '') + '">' + (v || '\u2013') + '</td>';
 }
 
-function assignCategoryTableHtml(categories) {
+function assignCategoryTableHtml(categories, ownerLabel) {
+  var emptyRefs = { completed: [], pending: [], onHold: [], rejected: [] };
   var sums = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+  var sumRefs = { completed: [], pending: [], onHold: [], rejected: [] };
   var rows = ASSIGN_CATEGORY_OPTIONS.map(function(cat) {
     var d = categories[cat] || { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+    var refs = d.refs || emptyRefs;
     sums.completed += d.completed; sums.pending += d.pending; sums.onHold += d.onHold;
     sums.rejected += d.rejected; sums.total += d.total;
+    sumRefs.completed = sumRefs.completed.concat(refs.completed);
+    sumRefs.pending = sumRefs.pending.concat(refs.pending);
+    sumRefs.onHold = sumRefs.onHold.concat(refs.onHold);
+    sumRefs.rejected = sumRefs.rejected.concat(refs.rejected);
+    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
     return '<tr>'
       + '<td class="editor-name">' + esc(cat) + '</td>'
-      + assignNumCell(d.completed) + assignNumCell(d.pending) + assignNumCell(d.onHold) + assignNumCell(d.rejected)
-      + assignNumCell(d.total)
+      + assignNumCell(d.completed, refs.completed, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Completed')
+      + assignNumCell(d.pending, refs.pending, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Pending')
+      + assignNumCell(d.onHold, refs.onHold, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 On Hold')
+      + assignNumCell(d.rejected, refs.rejected, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Rejected')
+      + assignNumCell(d.total, rowAllRefs, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 All statuses')
       + '</tr>';
   }).join('');
 
+  var grandAllRefs = sumRefs.completed.concat(sumRefs.pending, sumRefs.onHold, sumRefs.rejected);
   return '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
     + '<th>Category</th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
     + '</tr></thead><tbody>'
     + rows
     + '<tr class="team-total"><td>Total</td>'
-    + assignNumCell(sums.completed) + assignNumCell(sums.pending) + assignNumCell(sums.onHold) + assignNumCell(sums.rejected)
-    + assignNumCell(sums.total)
+    + assignNumCell(sums.completed, sumRefs.completed, ownerLabel + ' \u00B7 Completed')
+    + assignNumCell(sums.pending, sumRefs.pending, ownerLabel + ' \u00B7 Pending')
+    + assignNumCell(sums.onHold, sumRefs.onHold, ownerLabel + ' \u00B7 On Hold')
+    + assignNumCell(sums.rejected, sumRefs.rejected, ownerLabel + ' \u00B7 Rejected')
+    + assignNumCell(sums.total, grandAllRefs, ownerLabel + ' \u00B7 All statuses')
     + '</tr></tbody></table></div>';
+}
+
+// Sums an editor's per-category tallies down into flat status totals (plus
+// the refs behind each), for the leaderboard-style "Quick Report" table
+// (mirrors the CRM extension's dashboard, which shows this ahead of the
+// full category breakdown).
+function assignEditorStatusTotals(editorData) {
+  var t = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: editorData.total };
+  var refs = { completed: [], pending: [], onHold: [], rejected: [] };
+  ASSIGN_CATEGORY_OPTIONS.forEach(function(cat) {
+    var d = editorData.categories[cat];
+    if (!d) return;
+    t.completed += d.completed; t.pending += d.pending; t.onHold += d.onHold; t.rejected += d.rejected;
+    if (d.refs) {
+      refs.completed = refs.completed.concat(d.refs.completed);
+      refs.pending = refs.pending.concat(d.refs.pending);
+      refs.onHold = refs.onHold.concat(d.refs.onHold);
+      refs.rejected = refs.rejected.concat(d.refs.rejected);
+    }
+  });
+  return { sums: t, refs: refs };
+}
+
+function assignQuickReportHtml(byEditor, editorNames) {
+  if (editorNames.length === 0) return '';
+  var grand = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+  var grandRefs = { completed: [], pending: [], onHold: [], rejected: [] };
+  var rows = editorNames.map(function(name) {
+    var r = assignEditorStatusTotals(byEditor[name]);
+    var d = r.sums, refs = r.refs;
+    grand.completed += d.completed; grand.pending += d.pending; grand.onHold += d.onHold;
+    grand.rejected += d.rejected; grand.total += d.total;
+    grandRefs.completed = grandRefs.completed.concat(refs.completed);
+    grandRefs.pending = grandRefs.pending.concat(refs.pending);
+    grandRefs.onHold = grandRefs.onHold.concat(refs.onHold);
+    grandRefs.rejected = grandRefs.rejected.concat(refs.rejected);
+    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
+    return '<tr>'
+      + '<td class="editor-name">' + esc(name) + '</td>'
+      + assignNumCell(d.completed, refs.completed, name + ' \u00B7 Completed')
+      + assignNumCell(d.pending, refs.pending, name + ' \u00B7 Pending')
+      + assignNumCell(d.onHold, refs.onHold, name + ' \u00B7 On Hold')
+      + assignNumCell(d.rejected, refs.rejected, name + ' \u00B7 Rejected')
+      + assignNumCell(d.total, rowAllRefs, name + ' \u00B7 All statuses')
+      + '</tr>';
+  }).join('');
+
+  var grandAllRefs = grandRefs.completed.concat(grandRefs.pending, grandRefs.onHold, grandRefs.rejected);
+  return '<div class="dp-dash-quick-report">'
+    + '<div class="dp-bed-table-title">Quick Report</div>'
+    + '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
+    + '<th></th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
+    + '</tr></thead><tbody>'
+    + rows
+    + '<tr class="team-total"><td>Total</td>'
+    + assignNumCell(grand.completed, grandRefs.completed, 'Whole Team \u00B7 Completed')
+    + assignNumCell(grand.pending, grandRefs.pending, 'Whole Team \u00B7 Pending')
+    + assignNumCell(grand.onHold, grandRefs.onHold, 'Whole Team \u00B7 On Hold')
+    + assignNumCell(grand.rejected, grandRefs.rejected, 'Whole Team \u00B7 Rejected')
+    + assignNumCell(grand.total, grandAllRefs, 'Whole Team \u00B7 All statuses')
+    + '</tr></tbody></table></div>'
+    + '</div>';
 }
 
 function assignBedTableHtml(beds, rowLabel) {
@@ -2354,7 +2478,7 @@ function assignCardHtml(title, data, isTeam) {
     +   '<div class="dp-dash-card-total">Total: ' + data.total + '</div>'
     + '</div>'
     + assignLatestLineHtml(data.latest)
-    + assignCategoryTableHtml(data.categories)
+    + assignCategoryTableHtml(data.categories, title)
     + assignBedTablesHtml(data.categories)
     + '</div>';
 }
@@ -2366,6 +2490,7 @@ function assignTrackedCategoriesText() { return '(' + ASSIGN_CATEGORY_OPTIONS.jo
 function assignScopeLabelText(s) {
   if (s === 'today') return 'assigned today';
   if (s === 'yesterday') return 'assigned yesterday';
+  if (s === 'thisweek') return 'assigned this week (Mon\u2013Sun)';
   if (s === 'week') return 'assigned in the last 7 days';
   if (s === 'all') return 'assigned (all time)';
   if (s && s.type === 'custom') return 'assigned from ' + s.start + ' to ' + s.end;
@@ -2376,6 +2501,7 @@ function assignEmptyLabelText(s) {
   var suffix = 'in one of the tracked categories ' + assignTrackedCategoriesText() + '.';
   if (s === 'today') return 'No listings assigned or put on hold today ' + suffix;
   if (s === 'yesterday') return 'No listings assigned or put on hold yesterday ' + suffix;
+  if (s === 'thisweek') return 'No listings assigned or put on hold this week ' + suffix;
   if (s === 'week') return 'No listings assigned or put on hold in the last 7 days ' + suffix;
   if (s === 'all') return 'No assigned or on-hold listings found ' + suffix;
   if (s && s.type === 'custom') return 'No listings assigned or put on hold in that date range ' + suffix;
@@ -2384,6 +2510,9 @@ function assignEmptyLabelText(s) {
 
 function assignFmtFullDate(d) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+function assignFmtTime(d) {
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 function assignFmtShortDate(d, includeYear) {
   var opts = { month: 'short', day: 'numeric' };
@@ -2404,8 +2533,10 @@ function assignDateInfoText(s) {
 // ── Modal render / wiring ─────────────────────────────────────────────────
 
 function renderAssignDashboard() {
-  var inner = document.getElementById('assignDashInner');
+  var inner = document.getElementById('assignDashView');
   if (!inner) return;
+  ASSIGN_REFS_REGISTRY = {};
+  ASSIGN_REFS_COUNTER = 0;
   var scope = ASSIGN_SCOPE;
   var isCustom = !!(scope && scope.type === 'custom');
 
@@ -2415,6 +2546,7 @@ function renderAssignDashboard() {
     '<div class="fp-time-pills" id="assignScopePills">'
     + '<button type="button" class="' + pillClass(scope === 'today') + '" data-scope="today">Today</button>'
     + '<button type="button" class="' + pillClass(scope === 'yesterday') + '" data-scope="yesterday">Yesterday</button>'
+    + '<button type="button" class="' + pillClass(scope === 'thisweek') + '" data-scope="thisweek">This Week</button>'
     + '<button type="button" class="' + pillClass(scope === 'week') + '" data-scope="week">Last 7 Days</button>'
     + '<button type="button" class="' + pillClass(scope === 'all') + '" data-scope="all">All time</button>'
     + '<button type="button" class="' + pillClass(isCustom) + '" data-scope="custom">Custom Range</button>'
@@ -2429,15 +2561,17 @@ function renderAssignDashboard() {
     + '</div>';
 
   var dateText = assignDateInfoText(scope);
-  var dateInfoHtml = dateText ? '<div class="dp-dash-date-info">' + esc(dateText) + '</div>' : '';
+  var dateInfoHtml = dateText
+    ? '<div class="dp-dash-date-info">' + esc(dateText)
+      + ' \u00B7 <span class="dp-dash-live-time" id="assignLiveTime">' + esc(assignFmtTime(new Date())) + '</span></div>'
+    : '';
 
   var headerHtml =
-    '<div class="modal-head">'
+    '<div class="report-header">'
     +   '<div>'
-    +     '<div class="modal-req" style="font-size:16px;">\uD83D\uDCCA Assignment Dashboard</div>'
-    +     '<div class="modal-ref">From the Assignments tab \u2014 same data as the CRM extension</div>'
+    +     '<div class="report-title">\uD83D\uDCCA Assignment Dashboard</div>'
+    +     '<div class="report-subtitle">From the Assignments tab \u2014 same data as the CRM extension</div>'
     +   '</div>'
-    +   '<button class="modal-close" onclick="document.getElementById(\'assignDashBg\').style.display=\'none\'">\u2715</button>'
     + '</div>'
     + scopeRowHtml + customRangeHtml + dateInfoHtml;
 
@@ -2461,13 +2595,14 @@ function renderAssignDashboard() {
   if (unassigned.total > 0) {
     summary += ', plus ' + unassigned.total + ' unassigned listing' + (unassigned.total === 1 ? '' : 's') + ' on hold';
   }
-  summary += ' \u2014 data pulled from the sheet.';
+  summary += ' \u2014 data pulled from the sheet, not limited to what\'s loaded on this page.';
   if (uncategorized > 0) {
     summary += ' ' + uncategorized + ' listing' + (uncategorized === 1 ? '' : 's') + ' excluded \u2014 not one of the '
       + ASSIGN_CATEGORY_OPTIONS.length + ' tracked categories, or the category was never captured.';
   }
 
   var editorNames = Object.keys(byEditor).sort(function(a, b) { return byEditor[b].total - byEditor[a].total; });
+  var quickReportHtml = assignQuickReportHtml(byEditor, editorNames);
 
   var bodyHtml;
   if (editorNames.length === 0 && unassigned.total === 0) {
@@ -2480,7 +2615,7 @@ function renderAssignDashboard() {
     bodyHtml += '</div>';
   }
 
-  inner.innerHTML = headerHtml + '<div class="dp-dash-summary">' + esc(summary) + '</div>' + bodyHtml;
+  inner.innerHTML = headerHtml + quickReportHtml + '<div class="dp-dash-summary">' + esc(summary) + '</div>' + bodyHtml;
   assignWireDashboardControls();
 }
 
@@ -2509,6 +2644,87 @@ function assignWireDashboardControls() {
   }
 }
 
+// ── Refs modal — clicking any non-zero count above opens this, listing the
+// individual DP-REQ refs that make up that number. Built dynamically (like
+// the extension's showRefsModal) rather than pre-declared in index.html,
+// and stacks on top of the Assignment Dashboard modal.
+function assignCloseRefsModal() {
+  var el = document.getElementById('assignRefsBg');
+  if (el) el.remove();
+}
+
+function assignShowRefsModal(title, refs) {
+  assignCloseRefsModal();
+  var uniqueRefs = Array.prototype.filter.call(refs || [], function(r, i, arr) { return r && arr.indexOf(r) === i; }).sort();
+
+  var itemsHtml = uniqueRefs.length === 0
+    ? '<div class="dp-dash-empty">No reference numbers found.</div>'
+    : '<div class="dp-refs-list">' + uniqueRefs.map(function(ref) {
+        return '<button type="button" class="dp-refs-list-item" data-ref="' + esc(ref) + '">'
+          + '<span class="dp-refs-list-ref">' + esc(ref) + '</span>'
+          + '<span class="dp-refs-list-action">Copy</span>'
+          + '</button>';
+      }).join('') + '</div>';
+
+  var bg = document.createElement('div');
+  bg.id = 'assignRefsBg';
+  bg.className = 'modal-bg';
+  bg.style.zIndex = '260'; // stack above the Assignment Dashboard modal
+  bg.addEventListener('click', function(e) { if (e.target === bg) assignCloseRefsModal(); });
+  bg.innerHTML =
+    '<div class="modal dp-refs-modal" style="max-width:420px;">'
+    +   '<div class="modal-head">'
+    +     '<div class="modal-req" style="font-size:15px;">' + esc(title) + ' (' + uniqueRefs.length + ')</div>'
+    +     '<button class="modal-close" id="assignRefsCloseBtn">\u2715</button>'
+    +   '</div>'
+    +   itemsHtml
+    +   '<div class="edit-actions" style="margin-top:14px;">'
+    +     '<button class="edit-save-btn" id="assignRefsCopyAllBtn"' + (uniqueRefs.length === 0 ? ' disabled' : '') + '>Copy List</button>'
+    +     '<button class="edit-cancel-btn" id="assignRefsCloseBtn2">Close</button>'
+    +   '</div>'
+    + '</div>';
+  document.body.appendChild(bg);
+
+  var closeBtn1 = document.getElementById('assignRefsCloseBtn');
+  var closeBtn2 = document.getElementById('assignRefsCloseBtn2');
+  if (closeBtn1) closeBtn1.addEventListener('click', assignCloseRefsModal);
+  if (closeBtn2) closeBtn2.addEventListener('click', assignCloseRefsModal);
+
+  var copyAllBtn = document.getElementById('assignRefsCopyAllBtn');
+  if (copyAllBtn && uniqueRefs.length > 0) {
+    copyAllBtn.addEventListener('click', function() {
+      navigator.clipboard.writeText(uniqueRefs.join('\n')).then(function() {
+        copyAllBtn.textContent = 'Copied!';
+        setTimeout(function() { copyAllBtn.textContent = 'Copy List'; }, 1500);
+      }).catch(function() {});
+    });
+  }
+
+  bg.querySelectorAll('.dp-refs-list-item').forEach(function(item) {
+    item.addEventListener('click', function() {
+      var ref = item.getAttribute('data-ref');
+      var actionEl = item.querySelector('.dp-refs-list-action');
+      navigator.clipboard.writeText(ref).then(function() {
+        if (actionEl) {
+          actionEl.textContent = 'Copied \u2713';
+          setTimeout(function() { if (actionEl) actionEl.textContent = 'Copy'; }, 1200);
+        }
+      }).catch(function() {});
+    });
+  });
+}
+
+// Delegated (added once, at load) — the stat buttons are re-created on
+// every renderAssignDashboard() call, so per-element listeners would leak
+// or go stale; delegation on document sidesteps that entirely.
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest && e.target.closest('.dp-dash-stat-btn');
+  if (!btn) return;
+  var id = btn.getAttribute('data-refs-id');
+  var entry = id && ASSIGN_REFS_REGISTRY[id];
+  if (entry) assignShowRefsModal(entry.title, entry.refs);
+});
+
 function fetchAssignData(cb) {
   fetch(S.url + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
     .then(function(r) { return r.json(); })
@@ -2523,14 +2739,20 @@ function fetchAssignData(cb) {
     });
 }
 
-function openAssignDashModal() {
-  document.getElementById('assignDashBg').style.display = 'flex';
-  renderAssignDashboard(); // show something immediately (loading state)
-  fetchAssignData(function() { renderAssignDashboard(); });
+function assignStartClock() {
+  assignStopClock();
+  ASSIGN_CLOCK_INTERVAL = setInterval(function() {
+    var el = document.getElementById('assignLiveTime');
+    if (el) el.textContent = assignFmtTime(new Date());
+  }, 1000);
 }
 
-function closeAssignDashModal(e) {
-  if (e.target === document.getElementById('assignDashBg')) {
-    document.getElementById('assignDashBg').style.display = 'none';
-  }
+function assignStopClock() {
+  if (ASSIGN_CLOCK_INTERVAL) { clearInterval(ASSIGN_CLOCK_INTERVAL); ASSIGN_CLOCK_INTERVAL = null; }
+}
+
+function openAssignDashboardView() {
+  renderAssignDashboard(); // show something immediately (loading state)
+  fetchAssignData(function() { renderAssignDashboard(); });
+  assignStartClock();
 }
