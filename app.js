@@ -987,8 +987,52 @@ function openModal(row) {
 
 // ─── Assigner history (from the merged "Assignments" tab) ─────────────────────
 // Joined on Listing Reference (Copier) === Ref (Assigner) — same DP-R/DP-S value
-// in both sheets. Builds a chronological dot timeline from whichever of
-// Assigned/Reassigned/Started/On Hold/Completed/Rejected the matched row has.
+// in both sheets.
+//
+// Preferred path: Apps Script now writes every assign/reassign/start/hold/
+// complete/reject/download/recategorize as its own immutable entry in the
+// row's History column (a JSON array), specifically so reassigning a
+// listing — or auto-reopening a Rejected one once new photos land under a
+// different category — no longer erases whoever/whatever came before.
+// Falls back to reconstructing from the flat AssignedAt/StartedAt/etc.
+// columns (the old approach — only ever shows the single most recent
+// assignment/reassignment) for any row that hasn't been touched since that
+// column was added.
+var HISTORY_EVENT_META = {
+  assigned:      { label: 'Assigned',      type: 'assigned' },
+  started:       { label: 'Started',       type: 'started' },
+  onhold:        { label: 'On hold',       type: 'onhold' },
+  completed:     { label: 'Completed',     type: 'completed' },
+  rejected:      { label: 'Rejected',      type: 'rejected' },
+  downloaded:    { label: 'Downloaded',    type: 'downloaded' },
+  reassigned:    { label: 'Reassigned',    type: 'reassigned' },
+  unassigned:    { label: 'Unassigned',    type: 'unassigned' },
+  recategorized: { label: 'Recategorized', type: 'recategorized' },
+};
+
+function metaForHistoryEvent(ev) {
+  switch (ev.type) {
+    case 'assigned':      return ev.editor ? ('to ' + ev.editor) : '';
+    case 'reassigned':    return (ev.from && ev.to ? (ev.from + ' \u2192 ' + ev.to) : '') + (ev.by ? (' by ' + ev.by) : '');
+    case 'unassigned':    return ev.editor ? ('was ' + ev.editor) : '';
+    case 'onhold':        return ev.reason || '';
+    case 'recategorized': return (ev.from && ev.to) ? (ev.from + ' \u2192 ' + ev.to) : '';
+    case 'started': case 'completed': case 'rejected': case 'downloaded':
+      return ev.editor ? ('by ' + ev.editor) : '';
+    default: return '';
+  }
+}
+
+function parseAssignmentHistory(raw) {
+  if (!raw) return [];
+  try {
+    var parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function buildHistorySectionHtml(ref) {
   var html = '<div class="history-section">'
     + '<div class="d-label">History</div>';
@@ -1005,66 +1049,82 @@ function buildHistorySectionHtml(ref) {
   }
 
   var events = [];
+  var log = parseAssignmentHistory(match['History']);
 
-  if (match['AssignedAt']) {
-    // If this listing was later reassigned, the "assigned to" name for this
-    // very first event is who it was ORIGINALLY given to — ReassignedFrom —
-    // not the current Editor, which by then has already moved on.
-    var firstEditor = match['ReassignedFrom'] || match['Editor'] || '';
-    events.push({
-      at:    match['AssignedAt'],
-      type:  'assigned',
-      label: 'Assigned',
-      meta:  firstEditor ? ('to ' + firstEditor) : '',
-    });
-  }
+  if (log.length > 0) {
+    events = log
+      .filter(function(ev) { return ev && ev.ts && HISTORY_EVENT_META[ev.type]; })
+      .map(function(ev) {
+        return {
+          at:    ev.ts,
+          type:  HISTORY_EVENT_META[ev.type].type,
+          label: HISTORY_EVENT_META[ev.type].label,
+          meta:  metaForHistoryEvent(ev),
+        };
+      });
+  } else {
+    // Fallback for listings whose last write happened before the History
+    // column existed.
+    if (match['AssignedAt']) {
+      // If this listing was later reassigned, the "assigned to" name for this
+      // very first event is who it was ORIGINALLY given to — ReassignedFrom —
+      // not the current Editor, which by then has already moved on.
+      var firstEditor = match['ReassignedFrom'] || match['Editor'] || '';
+      events.push({
+        at:    match['AssignedAt'],
+        type:  'assigned',
+        label: 'Assigned',
+        meta:  firstEditor ? ('to ' + firstEditor) : '',
+      });
+    }
 
-  if (match['ReassignedAt']) {
-    var from = match['ReassignedFrom'] || '?';
-    var to   = match['ReassignedTo']   || '?';
-    var by   = match['ReassignedBy'];
-    events.push({
-      at:    match['ReassignedAt'],
-      type:  'reassigned',
-      label: 'Reassigned',
-      meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
-    });
-  }
+    if (match['ReassignedAt']) {
+      var from = match['ReassignedFrom'] || '?';
+      var to   = match['ReassignedTo']   || '?';
+      var by   = match['ReassignedBy'];
+      events.push({
+        at:    match['ReassignedAt'],
+        type:  'reassigned',
+        label: 'Reassigned',
+        meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
+      });
+    }
 
-  if (match['StartedAt']) {
-    events.push({
-      at:    match['StartedAt'],
-      type:  'started',
-      label: 'Started',
-      meta:  '',
-    });
-  }
+    if (match['StartedAt']) {
+      events.push({
+        at:    match['StartedAt'],
+        type:  'started',
+        label: 'Started',
+        meta:  '',
+      });
+    }
 
-  if (match['OnHoldAt']) {
-    events.push({
-      at:    match['OnHoldAt'],
-      type:  'onhold',
-      label: 'On hold',
-      meta:  match['OnHoldReason'] || '',
-    });
-  }
+    if (match['OnHoldAt']) {
+      events.push({
+        at:    match['OnHoldAt'],
+        type:  'onhold',
+        label: 'On hold',
+        meta:  match['OnHoldReason'] || '',
+      });
+    }
 
-  if (match['CompletedAt']) {
-    events.push({
-      at:    match['CompletedAt'],
-      type:  'completed',
-      label: 'Completed',
-      meta:  '',
-    });
-  }
+    if (match['CompletedAt']) {
+      events.push({
+        at:    match['CompletedAt'],
+        type:  'completed',
+        label: 'Completed',
+        meta:  '',
+      });
+    }
 
-  if (match['RejectedAt']) {
-    events.push({
-      at:    match['RejectedAt'],
-      type:  'rejected',
-      label: 'Rejected',
-      meta:  '',
-    });
+    if (match['RejectedAt']) {
+      events.push({
+        at:    match['RejectedAt'],
+        type:  'rejected',
+        label: 'Rejected',
+        meta:  '',
+      });
+    }
   }
 
   if (!events.length) {

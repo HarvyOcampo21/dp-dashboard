@@ -991,6 +991,9 @@ body {
 .h-dot-onhold     { background: var(--purple); box-shadow: 0 0 0 3px var(--purple-bg); }
 .h-dot-completed  { background: var(--green);  box-shadow: 0 0 0 3px var(--green-glow); }
 .h-dot-rejected   { background: var(--red);    box-shadow: 0 0 0 3px var(--red-bg); }
+.h-dot-unassigned    { background: var(--text3); box-shadow: 0 0 0 3px var(--border); }
+.h-dot-downloaded    { background: var(--blue);  box-shadow: 0 0 0 3px var(--blue-bg); }
+.h-dot-recategorized { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-bg); }
 
 .history-label {
   font-size: 12px;
