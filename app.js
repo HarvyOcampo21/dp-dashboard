@@ -20,6 +20,7 @@ function getOrderedEditors() {
 // ─── State ────────────────────────────────────────────────────────────────────
 var S = {
   url:       'https://script.google.com/a/macros/drivenproperties.com/s/AKfycbxRnU165B4OZoIyc-sDFrkQB-tePNsb9MBrMWJa7IRZuTWzzITQvxT6ES7eSCVzc6S-/exec',
+  assignUrl: 'https://script.google.com/macros/s/AKfycbzpHle7iubZvZTSEtY3yUGdtQIwiFaKIQFSkRBnYFHDgYku9Gyt-Iwb30jGduddY2K0/exec',
   data:      {},
   editors:   [],
   editor:    'all',
@@ -2814,7 +2815,7 @@ document.addEventListener('click', function(e) {
 });
 
 function fetchAssignData(cb, silent) {
-  fetch(S.url + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
+  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var next = (data && Array.isArray(data.assignments)) ? data.assignments : [];
