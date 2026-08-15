@@ -50,6 +50,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
   fetchData();
 
+  // Prefetch Assignment data in the background on load too — not just when
+  // the Assignment Dashboard tab is opened. Listing detail modals' History
+  // section (buildHistorySectionHtml) reads from ASSIGN_DATA regardless of
+  // which view is active, so without this, opening a modal before ever
+  // visiting the Assignment Dashboard would show "No history" simply
+  // because the data hadn't been fetched yet — not because none exists.
+  fetchAssignData(function() {
+    // Re-render only if a listing detail modal happens to already be open
+    // at the moment this resolves, so its History section picks up the
+    // freshly-arrived data instead of staying stuck on a pre-fetch render.
+    var modalBg = document.getElementById('modalBg');
+    if (modalBg && modalBg.style.display === 'flex' && typeof MODAL_ROW !== 'undefined' && MODAL_ROW) {
+      openModal(MODAL_ROW);
+    }
+  });
+
   document.getElementById('searchInput').addEventListener('input', function() {
     S.search = this.value.toLowerCase();
     render();
@@ -1026,6 +1042,7 @@ function metaForHistoryEvent(ev) {
 
 function parseAssignmentHistory(raw) {
   if (!raw) return [];
+  if (Array.isArray(raw)) return raw; // ASSIGN_DATA already parses this server-side
   try {
     var parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -1038,10 +1055,14 @@ function buildHistorySectionHtml(ref) {
   var html = '<div class="history-section">'
     + '<div class="d-label">History</div>';
 
-  var rows = (S.data && S.data['Assignments']) || [];
+  // Assignments now lives on its own dedicated backend (ASSIGN_DATA, fetched
+  // from S.assignUrl) rather than S.data['Assignments'] — that tab no
+  // longer exists in the Copier spreadsheet/script at all since the split,
+  // so a lookup against S.data would always come back empty here.
+  var rows = (ASSIGN_DATA && Array.isArray(ASSIGN_DATA.assignments)) ? ASSIGN_DATA.assignments : [];
   var match = null;
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['Ref'] === ref) { match = rows[i]; break; }
+    if (rows[i].ref === ref) { match = rows[i]; break; }
   }
 
   if (!match) {
@@ -1050,7 +1071,7 @@ function buildHistorySectionHtml(ref) {
   }
 
   var events = [];
-  var log = parseAssignmentHistory(match['History']);
+  var log = parseAssignmentHistory(match.history);
 
   if (log.length > 0) {
     events = log
@@ -1065,62 +1086,64 @@ function buildHistorySectionHtml(ref) {
       });
   } else {
     // Fallback for listings whose last write happened before the History
-    // column existed.
-    if (match['AssignedAt']) {
+    // column existed. Field names are camelCase here (ASSIGN_DATA's own
+    // shape from getAssignerAssignments), not the PascalCase sheet-header
+    // names S.data used to carry.
+    if (match.assignedAt) {
       // If this listing was later reassigned, the "assigned to" name for this
-      // very first event is who it was ORIGINALLY given to — ReassignedFrom —
-      // not the current Editor, which by then has already moved on.
-      var firstEditor = match['ReassignedFrom'] || match['Editor'] || '';
+      // very first event is who it was ORIGINALLY given to — reassignedFrom —
+      // not the current editor, which by then has already moved on.
+      var firstEditor = match.reassignedFrom || match.editor || '';
       events.push({
-        at:    match['AssignedAt'],
+        at:    match.assignedAt,
         type:  'assigned',
         label: 'Assigned',
         meta:  firstEditor ? ('to ' + firstEditor) : '',
       });
     }
 
-    if (match['ReassignedAt']) {
-      var from = match['ReassignedFrom'] || '?';
-      var to   = match['ReassignedTo']   || '?';
-      var by   = match['ReassignedBy'];
+    if (match.reassignedAt) {
+      var from = match.reassignedFrom || '?';
+      var to   = match.reassignedTo   || '?';
+      var by   = match.reassignedBy;
       events.push({
-        at:    match['ReassignedAt'],
+        at:    match.reassignedAt,
         type:  'reassigned',
         label: 'Reassigned',
         meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
       });
     }
 
-    if (match['StartedAt']) {
+    if (match.startedAt) {
       events.push({
-        at:    match['StartedAt'],
+        at:    match.startedAt,
         type:  'started',
         label: 'Started',
         meta:  '',
       });
     }
 
-    if (match['OnHoldAt']) {
+    if (match.onHoldAt) {
       events.push({
-        at:    match['OnHoldAt'],
+        at:    match.onHoldAt,
         type:  'onhold',
         label: 'On hold',
-        meta:  match['OnHoldReason'] || '',
+        meta:  match.onHoldReason || '',
       });
     }
 
-    if (match['CompletedAt']) {
+    if (match.completedAt) {
       events.push({
-        at:    match['CompletedAt'],
+        at:    match.completedAt,
         type:  'completed',
         label: 'Completed',
         meta:  '',
       });
     }
 
-    if (match['RejectedAt']) {
+    if (match.rejectedAt) {
       events.push({
-        at:    match['RejectedAt'],
+        at:    match.rejectedAt,
         type:  'rejected',
         label: 'Rejected',
         meta:  '',
@@ -2282,6 +2305,14 @@ function assignScopeToRange(scope) {
     var monday = assignAddDays(assignStartOfLocalDay(now), -((day0 + 6) % 7));
     return [monday, assignAddDays(monday, 7)];
   }
+  if (scope === 'month') {
+    // 1st of the current month through the end of TODAY (month-to-date,
+    // not the full calendar month) — e.g. on Aug 13 this is Aug 1–13, and
+    // on Aug 14 it's automatically Aug 1–14 with no code change needed,
+    // since both ends are computed fresh from "now" every time this runs.
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return [monthStart, assignAddDays(assignStartOfLocalDay(now), 1)];
+  }
   if (scope && scope.type === 'custom') {
     if (!scope.start || !scope.end) return null;
     var s4 = new Date(scope.start + 'T00:00:00');
@@ -2555,6 +2586,7 @@ function assignScopeLabelText(s) {
   if (s === 'yesterday') return 'assigned yesterday';
   if (s === 'thisweek') return 'assigned this week (Mon\u2013Sun)';
   if (s === 'week') return 'assigned in the last 7 days';
+  if (s === 'month') return 'assigned this month (month-to-date)';
   if (s === 'all') return 'assigned (all time)';
   if (s && s.type === 'custom') return 'assigned from ' + s.start + ' to ' + s.end;
   return 'assigned';
@@ -2566,6 +2598,7 @@ function assignEmptyLabelText(s) {
   if (s === 'yesterday') return 'No listings assigned or put on hold yesterday ' + suffix;
   if (s === 'thisweek') return 'No listings assigned or put on hold this week ' + suffix;
   if (s === 'week') return 'No listings assigned or put on hold in the last 7 days ' + suffix;
+  if (s === 'month') return 'No listings assigned or put on hold this month (month-to-date) ' + suffix;
   if (s === 'all') return 'No assigned or on-hold listings found ' + suffix;
   if (s && s.type === 'custom') return 'No listings assigned or put on hold in that date range ' + suffix;
   return 'No listings found ' + suffix;
@@ -2635,6 +2668,7 @@ function renderAssignDashboard() {
     + '<button type="button" class="' + pillClass(scope === 'yesterday') + '" data-scope="yesterday">Yesterday</button>'
     + '<button type="button" class="' + pillClass(scope === 'thisweek') + '" data-scope="thisweek">This Week</button>'
     + '<button type="button" class="' + pillClass(scope === 'week') + '" data-scope="week">Last 7 Days</button>'
+    + '<button type="button" class="' + pillClass(scope === 'month') + '" data-scope="month">Month</button>'
     + '<button type="button" class="' + pillClass(scope === 'all') + '" data-scope="all">All time</button>'
     + '<button type="button" class="' + pillClass(isCustom) + '" data-scope="custom">Custom Range</button>'
     + '</div>';
