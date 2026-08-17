@@ -1025,6 +1025,7 @@ var HISTORY_EVENT_META = {
   reassigned:    { label: 'Reassigned',    type: 'reassigned' },
   unassigned:    { label: 'Unassigned',    type: 'unassigned' },
   recategorized: { label: 'Recategorized', type: 'recategorized' },
+  downloaded_cleared: { label: 'Download cleared', type: 'downloaded_cleared' },
 };
 
 function metaForHistoryEvent(ev) {
@@ -1034,6 +1035,7 @@ function metaForHistoryEvent(ev) {
     case 'unassigned':    return ev.editor ? ('was ' + ev.editor) : '';
     case 'onhold':        return ev.reason || '';
     case 'recategorized': return (ev.from && ev.to) ? (ev.from + ' \u2192 ' + ev.to) : '';
+    case 'downloaded_cleared': return ev.reason || '';
     case 'started': case 'completed': case 'rejected': case 'downloaded':
       return ev.editor ? ('by ' + ev.editor) : '';
     default: return '';
@@ -1061,7 +1063,12 @@ function buildHistorySectionHtml(ref) {
   // so a lookup against S.data would always come back empty here.
   var rows = (ASSIGN_DATA && Array.isArray(ASSIGN_DATA.assignments)) ? ASSIGN_DATA.assignments : [];
   var match = null;
-  for (var i = 0; i < rows.length; i++) {
+  // Search from the END — a Ref can now have more than one row (see the
+  // Apps Script's reopenOnCategoryChange, which appends a fresh row instead
+  // of overwriting on a rework cycle), and new rows are always appended
+  // after old ones. The first match would silently grab an old, permanently
+  // -preserved Rejected/Completed cycle instead of the current one.
+  for (var i = rows.length - 1; i >= 0; i--) {
     if (rows[i].ref === ref) { match = rows[i]; break; }
   }
 
