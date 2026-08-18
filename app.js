@@ -144,9 +144,7 @@ document.addEventListener('DOMContentLoaded', function() {
     openAmenitiesModal();
   });
 
-  // ── Incoming requests edit ────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
-    if (e.target && e.target.id === 'editIncomingBtn') openIncomingModal();
     if (e.target && e.target.id === 'exportReportBtn') generateReportPPTX();
   });
 
@@ -228,12 +226,6 @@ function fetchData(silent) {
           var curLife = (S.data['Lifestyle'] || []).length;
           if (newLife !== curLife) changed = true;
         }
-        if (!changed) {
-          var newInc = (newData['Incoming'] || []).length;
-          var curInc = (S.data['Incoming'] || []).length;
-          if (newInc !== curInc) changed = true;
-        }
-
         if (!changed) return; // Nothing new — leave UI completely alone
 
         // Save scroll positions before re-render
@@ -566,23 +558,6 @@ function rowMatch(r) {
     .some(function(f) { return r[f] && String(r[f]).toLowerCase().includes(s); });
 }
 
-// Email Closed rows live in their own tab with a different shape (no Ref,
-// Category, etc.), so they're gathered separately from getRows() rather than
-// forced through the same listing-shaped filter pipeline. Still respects the
-// current editor tab, date range, and search box (matched against Subject).
-function getEmailClosedRows(editor) {
-  var all  = S.data['Email Closed'] || [];
-  var base = editor === 'all'
-    ? all
-    : all.filter(function(r) { return String(r['Editor'] || '').trim() === editor; });
-
-  return base.filter(function(r) {
-    if (!rowInRange(r)) return false;
-    if (S.search && !(r['Subject'] && String(r['Subject']).toLowerCase().indexOf(S.search) !== -1)) return false;
-    return true;
-  });
-}
-
 // ─── Render dispatcher ────────────────────────────────────────────────────────
 function render() {
   renderTabs();
@@ -653,18 +628,11 @@ function renderStats(rows) {
   var rejected = rows.filter(function(r) { return norm(r['Status']) === 'rejected'; }).length;
   var other    = total - uploaded - pending - rejected;
 
-  var emailClosed = getEmailClosedRows(S.editor).length;
-  // Total includes Email Closed (unlike Uploaded/Pending/Rejected/Other,
-  // which stay listing-only) — computed from the un-inflated `total` above
-  // so it doesn't skew the Other bucket.
-  var grandTotal = total + emailClosed;
-
   var items = [
-    { label:'Total',        val: grandTotal,  cls:''  },
+    { label:'Total',        val: total,        cls:''  },
     { label:'Uploaded',     val: uploaded,     cls:'g' },
     { label:'Pending',      val: pending,      cls:'y' },
     { label:'Rejected',     val: rejected,     cls:'r' },
-    { label:'Email Closed', val: emailClosed,  cls:'c' },
   ];
 
   if (other > 0) items.push({ label:'Other', val: other, cls:'b' });
@@ -705,9 +673,7 @@ function renderBoard(rows) {
   var board = document.getElementById('boardView');
   board.innerHTML = '';
 
-  var emailClosedAll = getEmailClosedRows(S.editor);
-
-  if (rows.length === 0 && emailClosedAll.length === 0) {
+  if (rows.length === 0) {
     board.innerHTML = '<div class="no-results">No listings match the current filters.</div>';
     return;
   }
@@ -716,8 +682,7 @@ function renderBoard(rows) {
     var ordered = getOrderedEditors();
     ordered.forEach(function(editor) {
       var edRows = rows.filter(function(r) { return r._editor === editor; });
-      var edEmailClosed = getEmailClosedRows(editor);
-      board.appendChild(makeColumn(editor, edRows, edEmailClosed));
+      board.appendChild(makeColumn(editor, edRows));
     });
     initDragColumns(board);
   } else {
@@ -732,19 +697,12 @@ function renderBoard(rows) {
       var sRows = rows.filter(function(r) { return (r['Status'] || '—') === status; });
       board.appendChild(makeColumn(status, sRows));
     });
-    // Email Closed entries have no Status, so they don't belong in any of the
-    // status columns above — they get their own column instead, same as any
-    // other status bucket, only shown when this editor actually has any.
-    if (emailClosedAll.length) {
-      board.appendChild(makeColumn('Email Closed', [], emailClosedAll));
-    }
   }
 }
 
-function makeColumn(title, rows, emailClosedRows) {
-  emailClosedRows = emailClosedRows || [];
+function makeColumn(title, rows) {
   var col = document.createElement('div');
-  var totalCount = rows.length + emailClosedRows.length;
+  var totalCount = rows.length;
   var isEmpty = totalCount === 0;
   col.className = 'col ' + (isEmpty ? 'collapsed' : 'open');
 
@@ -772,47 +730,14 @@ function makeColumn(title, rows, emailClosedRows) {
   if (totalCount === 0) {
     body.innerHTML = '<div class="col-empty">No listings</div>';
   } else {
-    // Merge listing cards and Email Closed cards into one chronological
-    // feed (newest first) rather than showing Email Closed as a separate
-    // block, so a column reads as "everything this editor did, in order."
-    var merged = rows.map(function(r) {
-      return { kind: 'listing', row: r, date: parseAnyDate(r['Date Uploaded']) };
-    }).concat(emailClosedRows.map(function(r) {
-      return { kind: 'emailClosed', row: r, date: parseAnyDate(r['Time Closed']) };
-    }));
-
-    merged.sort(function(a, b) {
-      if (!a.date && !b.date) return 0;
-      if (!a.date) return 1;
-      if (!b.date) return -1;
-      return b.date - a.date;
-    });
-
-    merged.forEach(function(item) {
-      body.appendChild(item.kind === 'emailClosed' ? makeEmailClosedCard(item.row) : makeCard(item.row));
+    sortNewest(rows).forEach(function(r) {
+      body.appendChild(makeCard(r));
     });
   }
 
   col.appendChild(header);
   col.appendChild(body);
   return col;
-}
-
-function makeEmailClosedCard(row) {
-  var card = document.createElement('div');
-  card.className = 'listing-card email-closed-card';
-
-  card.innerHTML =
-    '<div class="card-top-row">'
-    +   '<div class="card-req">📧 Email</div>'
-    + '</div>'
-    + '<div class="card-loc">' + esc(row['Subject'] || '—') + '</div>'
-    + '<div class="card-footer">'
-    +   '<span class="card-date">' + esc(fmtDateFull(row['Time Closed'])) + '</span>'
-    +   '<span class="sbadge s-closed">Closed</span>'
-    + '</div>';
-
-  return card;
 }
 
 function makeCard(row) {
@@ -1385,37 +1310,6 @@ function getRangeLabel() {
   return 'All time';
 }
 
-function getTodayKey() {
-  var now = new Date();
-  return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-}
-
-function getIncomingForRange() {
-  var rows = (S.data['Incoming'] || []);
-  if (!rows.length) return null;
-  if (S.range === 'today' || (!S.range && !S.fromDate)) {
-    var todayKey = getTodayKey();
-    return rows.find(function(r) {
-      var d = parseAnyDate(r['Date']);
-      if (!d) return false;
-      var key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      return key === todayKey;
-    }) || null;
-  }
-  var inRange = rows.filter(rowInRange);
-  if (!inRange.length) return null;
-  return inRange.reduce(function(acc, r) {
-    return {
-      'Photo Request': (acc['Photo Request']||0) + (parseInt(r['Photo Request'],10)||0),
-      'Agent Request': (acc['Agent Request']||0) + (parseInt(r['Agent Request'],10)||0),
-      'Brochure':      (acc['Brochure']     ||0) + (parseInt(r['Brochure'],     10)||0),
-      'Lifestyle':     (acc['Lifestyle']    ||0) + (parseInt(r['Lifestyle'],    10)||0),
-      'Profile':       (acc['Profile']      ||0) + (parseInt(r['Profile'],      10)||0),
-      'Others':        (acc['Others']       ||0) + (parseInt(r['Others'],       10)||0),
-    };
-  }, {});
-}
-
 function renderReport() {
   var wrap    = document.getElementById('reportView');
   var allRows = getAllRows().filter(rowInRange);
@@ -1440,34 +1334,10 @@ function renderReport() {
   var actualProfile   = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Profile'],  10)||0); }, 0);
   var actualOthers    = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0); }, 0);
 
-  // Email Closed — unlike Lifestyle/Profile/Others, this DOES roll into Total
-  // (see editorBreakdown/team below), per how it's meant to read next to Rejected.
-  var emailClosedRows = (S.data['Email Closed'] || []).filter(rowInRange);
-
-  var incoming = getIncomingForRange();
-  var expPhoto = incoming ? (parseInt(incoming['Photo Request'],10)||0) : null;
-  var expAgent = incoming ? (parseInt(incoming['Agent Request'],10)||0) : null;
-  var expBroch = incoming ? (parseInt(incoming['Brochure'],     10)||0) : null;
-  var expLife  = incoming ? (parseInt(incoming['Lifestyle'],    10)||0) : null;
-  var expProf  = incoming ? (parseInt(incoming['Profile'],      10)||0) : null;
-  var expOth   = incoming ? (parseInt(incoming['Others'],       10)||0) : null;
-  var expTotal = incoming ? (expPhoto + expAgent + expBroch) : null;
-
-  function diffBadge(actual, expected) {
-    if (expected === null) return '';
-    var diff = actual - expected;
-    if (diff === 0) return '<span class="inc-diff inc-even">✓</span>';
-    if (diff > 0)   return '<span class="inc-diff inc-over">▲ +' + diff + '</span>';
-    return '<span class="inc-diff inc-under">▼ ' + diff + '</span>';
-  }
-
-  function incCard(label, actual, expected, valClass) {
+  function incCard(label, actual, valClass) {
     return '<div class="incoming-item">'
       + '<div class="i-label">' + label + '</div>'
       + '<div class="i-val ' + (valClass||'') + '">' + actual + '</div>'
-      + (expected !== null
-          ? '<div class="inc-expected">Expected: <strong>' + expected + '</strong>' + diffBadge(actual, expected) + '</div>'
-          : '<div class="inc-expected inc-no-data">No morning input</div>')
       + '</div>';
   }
 
@@ -1476,20 +1346,16 @@ function renderReport() {
     var rows    = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor},r); }).filter(rowInRange);
     var nonRej  = rows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
     var lRows   = lifestyleRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
-    var ecRows  = emailClosedRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
     return {
       editor:      editor,
       photo:       nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
       agent:       nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
       broch:       nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
       rejected:    rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
-      emailClosed: ecRows.length,
       lifestyle:   lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
       profile:     lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
       others:      lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
-      // Email Closed rolls into Total (unlike Lifestyle/Profile/Others, which
-      // are tracked separately) — per how it's meant to sit next to Rejected.
-      total:       rows.length + ecRows.length,
+      total:       rows.length,
     };
   }).filter(function(r) { return r.total + r.lifestyle + r.profile + r.others > 0; })
     .sort(function(a,b) { return (b.total+b.lifestyle+b.profile+b.others)-(a.total+a.lifestyle+a.profile+a.others); });
@@ -1500,13 +1366,12 @@ function renderReport() {
       agent:       s.agent       + r.agent,
       broch:       s.broch       + r.broch,
       rejected:    s.rejected    + r.rejected,
-      emailClosed: s.emailClosed + r.emailClosed,
       lifestyle:   s.lifestyle   + r.lifestyle,
       profile:     s.profile     + r.profile,
       others:      s.others      + r.others,
       total:       s.total       + r.total,
     };
-  }, {photo:0,agent:0,broch:0,rejected:0,emailClosed:0,lifestyle:0,profile:0,others:0,total:0});
+  }, {photo:0,agent:0,broch:0,rejected:0,lifestyle:0,profile:0,others:0,total:0});
 
   function num(v, color) {
     var style = color ? ' style="color:' + color + '"' : '';
@@ -1518,13 +1383,12 @@ function renderReport() {
       + '<td class="editor-name">' + esc(r.editor) + '</td>'
       + num(r.photo) + num(r.agent) + num(r.broch)
       + num(r.rejected, r.rejected > 0 ? 'var(--red)' : null)
-      + num(r.emailClosed, r.emailClosed > 0 ? 'var(--cyan)' : null)
       + num(r.total)
       + '</tr>';
   }).join('');
 
-  // colspan for pending/rate rows = 5 (photo+agent+offplan+rejected+emailClosed)
-  var footColspan = '5';
+  // colspan for pending/rate rows = 4 (photo+agent+offplan+rejected)
+  var footColspan = '4';
 
   wrap.innerHTML =
     '<div class="report-header">'
@@ -1532,28 +1396,23 @@ function renderReport() {
     +   '<div class="report-title">Daily Report</div>'
     +   '<div class="report-subtitle">' + esc(getRangeLabel()) + '</div>'
     + '</div>'
-    + '<button class="modal-edit-btn" id="editIncomingBtn" style="height:32px;padding:0 14px;font-size:12px;">✏️ Morning Input</button>'
     +   '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;margin-left:8px;">📄 Export Report</button>'
     + '</div>'
 
     + '<div class="report-incoming">'
-    +   '<h3>Incoming Requests <span style="font-size:10px;font-weight:400;color:var(--text3);margin-left:8px;">ACTUAL vs EXPECTED</span></h3>'
+    +   '<h3>Incoming Requests</h3>'
     +   '<div class="incoming-grid">'
-    +     incCard('📷 Photographer Photos',   actualPhoto,     expPhoto, 'blue')
-    +     incCard('🏠 Agent Property Photos',  actualAgent,     expAgent, 'orange')
-    +     incCard('📄 Offplan / Brochure',     actualBroch,     expBroch, 'green')
+    +     incCard('📷 Photographer Photos',   actualPhoto,  'blue')
+    +     incCard('🏠 Agent Property Photos',  actualAgent,  'orange')
+    +     incCard('📄 Offplan / Brochure',     actualBroch,  'green')
     // FEATURE 1 — Rejected card between Offplan and Total
     +     '<div class="incoming-item">'
     +       '<div class="i-label">❌ Rejected</div>'
     +       '<div class="i-val" style="color:var(--red)">' + actualRej + '</div>'
-    +       '<div class="inc-expected inc-no-data">Independent metric</div>'
     +     '</div>'
     +     '<div class="incoming-item">'
     +       '<div class="i-label">Total Processed</div>'
     +       '<div class="i-val white">' + actualTotal + '</div>'
-    +       (expTotal !== null
-    +         '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
-    +         '<div class="inc-expected inc-no-data">No morning input</div>')
     +     '</div>'
     +   '</div>'
     + '</div>'
@@ -1563,7 +1422,6 @@ function renderReport() {
     +     '<th>Editor</th><th>Photo</th><th>Agent</th><th>Offplan</th>'
     // FEATURE 2 — Rejected column between Offplan and Total
     +     '<th style="color:var(--red)">Rejected</th>'
-    +     '<th style="color:var(--cyan)">Email Closed</th>'
     +     '<th>Total</th>'
     +   '</tr></thead><tbody>'
     +   editorRows
@@ -1571,7 +1429,6 @@ function renderReport() {
     +   '<tr class="team-total"><td>Team Total</td>'
     +     num(team.photo) + num(team.agent) + num(team.broch)
     +     num(team.rejected, team.rejected > 0 ? 'var(--red)' : null)
-    +     num(team.emailClosed, team.emailClosed > 0 ? 'var(--cyan)' : null)
     +     num(team.total)
     +   '</tr>'
     // FEATURE 5 — Pending and Completion Rate unchanged
@@ -1580,110 +1437,6 @@ function renderReport() {
     +   '</tbody></table>'
     + '</div>';
 }
-// ─── Incoming Modal ───────────────────────────────────────────────────────────
-function openIncomingModal() {
-  var existing = document.getElementById('incomingModalBg');
-  if (existing) existing.remove();
-
-  var todayRow = (S.range === 'today' || !S.range) ? getIncomingForRange() : null;
-  var fields = [
-    { key:'Photo Request', label:'📷 Photographer Photos', color:'var(--blue)' },
-    { key:'Agent Request', label:'🏠 Agent Property Photos', color:'var(--orange)' },
-    { key:'Brochure',      label:'📄 Offplan / Brochure',   color:'var(--green)' },
-    { key:'Lifestyle',     label:'🎬 Lifestyle',             color:'var(--purple)' },
-    { key:'Profile',       label:'👤 Profile',               color:'var(--blue)' },
-    { key:'Others',        label:'📦 Others',                color:'var(--orange)' },
-  ];
-
-  var today = new Date().toLocaleDateString('en-GB', { weekday:'long', day:'2-digit', month:'short', year:'numeric' });
-
-  var inputsHtml = fields.map(function(f) {
-    var val = todayRow ? (parseInt(todayRow[f.key],10)||0) : 0;
-    return '<div class="detail-item">'
-      + '<div class="d-label" style="color:' + f.color + '">' + f.label + '</div>'
-      + '<input class="edit-input incoming-field" type="number" min="0" step="1" data-field="' + esc(f.key) + '" value="' + val + '" placeholder="0">'
-      + '</div>';
-  }).join('');
-
-  var overlay = document.createElement('div');
-  overlay.id = 'incomingModalBg';
-  overlay.className = 'modal-bg';
-  overlay.style.display = 'flex';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-
-  overlay.innerHTML = '<div class="modal" style="max-width:500px;">'
-    + '<div class="modal-head">'
-    +   '<div>'
-    +     '<div class="modal-req" style="font-size:16px;">✏️ Morning Input</div>'
-    +     '<div class="modal-ref">' + esc(today) + '</div>'
-    +     '<div style="margin-top:4px;font-size:11px;font-family:var(--mono);color:var(--text3)">Enter expected request counts for today. Updates if already submitted.</div>'
-    +   '</div>'
-    +   '<button class="modal-close" id="incomingCloseBtn">✕</button>'
-    + '</div>'
-    + '<div class="edit-form-grid" style="margin-bottom:16px;">' + inputsHtml + '</div>'
-    + '<div class="edit-actions">'
-    +   '<button class="edit-save-btn" id="incomingSaveBtn">Save Morning Input</button>'
-    +   '<button class="edit-cancel-btn" id="incomingCancelBtn">Cancel</button>'
-    + '</div>'
-    + '<p id="incomingFeedback" style="font-size:12px;margin-top:10px;font-family:var(--mono);display:none;"></p>'
-    + '</div>';
-
-  document.body.appendChild(overlay);
-  document.getElementById('incomingCloseBtn').onclick  = function() { overlay.remove(); };
-  document.getElementById('incomingCancelBtn').onclick = function() { overlay.remove(); };
-  document.getElementById('incomingSaveBtn').onclick   = function() { saveIncoming(overlay); };
-}
-
-function saveIncoming(overlay) {
-  var inputs = overlay.querySelectorAll('.incoming-field');
-  var data   = {};
-  inputs.forEach(function(inp) { data[inp.dataset.field] = parseInt(inp.value,10)||0; });
-
-  var btn      = document.getElementById('incomingSaveBtn');
-  var feedback = document.getElementById('incomingFeedback');
-  btn.textContent = 'Saving…';
-  btn.disabled    = true;
-
-  fetch(S.url, {
-    method:  'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body:    JSON.stringify({ action: 'saveIncoming', data: data })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(json) {
-    btn.textContent = 'Save Morning Input';
-    btn.disabled    = false;
-    if (!json.success) {
-      feedback.textContent = '❌ ' + (json.error || 'Unknown error');
-      feedback.style.color = 'var(--red)';
-      feedback.style.display = 'block';
-      return;
-    }
-    var todayStr = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-    if (!S.data['Incoming']) S.data['Incoming'] = [];
-    var todayKey = getTodayKey();
-    var existIdx = -1;
-    S.data['Incoming'].forEach(function(r, i) {
-      var d = parseAnyDate(r['Date']);
-      if (!d) return;
-      var key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      if (key === todayKey) existIdx = i;
-    });
-    var newRow = Object.assign({ 'Date': todayStr }, data);
-    if (existIdx >= 0) { S.data['Incoming'][existIdx] = newRow; }
-    else { S.data['Incoming'].push(newRow); }
-    overlay.remove();
-    renderReport();
-  })
-  .catch(function(err) {
-    btn.textContent = 'Save Morning Input';
-    btn.disabled    = false;
-    feedback.textContent = '❌ ' + err.message;
-    feedback.style.color = 'var(--red)';
-    feedback.style.display = 'block';
-  });
-}
-
 // ─── Delete (Pending/Ongoing only) ───────────────────────────────────────────
 function confirmDelete(row) {
   // Close the modal first
@@ -3043,14 +2796,12 @@ function generateReportPPTX() {
   var TAUPE     = 'A9927D'; // Dusty Taupe — accent
   var BROWN     = '5E503F'; // Stone Brown — muted text
   var RED       = 'B3452F'; // rejected
-  var CYAN      = '4A7A82'; // email closed — muted teal, on-palette
   var FONT      = 'Calibri';
   var W = 13.33, H = 7.5;
 
   // ── Gather data for the current filter (same source as the on-screen report) ──
   var allRows       = getAllRows().filter(rowInRange);
   var rejectedRows  = allRows.filter(function(r) { return norm(r['Status']) === 'rejected'; });
-  var emailClosedAll = getEmailClosedRows('all');
 
   var editorBreakdown = S.editors.map(function(editor) {
     var rows = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor}, r); }).filter(rowInRange);
@@ -3067,29 +2818,26 @@ function generateReportPPTX() {
       inProgress:  rows.filter(function(r) { return norm(r['Status']) === 'ongoing'; }).length,
       onHold:      rows.filter(function(r) { return norm(r['Status']) === 'pending'; }).length,
       rejected:    rows.filter(function(r) { return norm(r['Status']) === 'rejected'; }).length,
-      emailClosed: getEmailClosedRows(editor).length,
       total:       rows.length,
     };
-  }).filter(function(r) { return r.total > 0 || r.emailClosed > 0; });
+  }).filter(function(r) { return r.total > 0; });
 
   var team = editorBreakdown.reduce(function(s, r) {
     return {
       photo: s.photo+r.photo, agent: s.agent+r.agent, offplan: s.offplan+r.offplan,
       completed: s.completed+r.completed, inProgress: s.inProgress+r.inProgress,
-      onHold: s.onHold+r.onHold, rejected: s.rejected+r.rejected,
-      emailClosed: s.emailClosed+r.emailClosed, total: s.total+r.total,
+      onHold: s.onHold+r.onHold, rejected: s.rejected+r.rejected, total: s.total+r.total,
     };
-  }, {photo:0,agent:0,offplan:0,completed:0,inProgress:0,onHold:0,rejected:0,emailClosed:0,total:0});
+  }, {photo:0,agent:0,offplan:0,completed:0,inProgress:0,onHold:0,rejected:0,total:0});
 
   // Completion Rate = Uploaded ÷ Total — identical formula to the on-screen report
   var compRate = team.total > 0 ? Math.round(team.completed / team.total * 100) : 0;
 
   var kpis = [
-    { label: 'Total Processed', val: String(team.total + team.emailClosed), color: INK },
+    { label: 'Total Processed', val: String(team.total), color: INK },
     { label: 'Uploaded',        val: String(team.completed), color: JET },
     { label: 'Pending',         val: String(team.inProgress + team.onHold), color: TAUPE },
     { label: 'Rejected',        val: String(team.rejected), color: RED },
-    { label: 'Email Closed',    val: String(team.emailClosed), color: CYAN },
     { label: 'Completion Rate', val: compRate + '%', color: BROWN },
   ];
 
@@ -3185,10 +2933,6 @@ function generateReportPPTX() {
       colW:[2.6,1.15,1.15,1.15,1.3,1.2,1.2,1.15,1.2],
       border:{ type:'solid', color:BORDER, pt:0.75 },
       fill:{ color:PANEL }, autoPage:false, rowH:0.525, valign:'middle',
-    });
-
-    s.addText('Email Closed (' + team.emailClosed + ') is tracked separately — see Summary above.', {
-      x:0.6, y:6.65, w:12.1, h:0.3, fontFace:FONT, fontSize:9.5, color:BROWN, italic:true,
     });
 
     footer(s, 'Page 2');

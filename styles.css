@@ -541,7 +541,6 @@ body {
 .stat-value.y { color: var(--yellow); }
 .stat-value.r { color: var(--red); }
 .stat-value.b { color: var(--blue); }
-.stat-value.c { color: var(--cyan); }
 
 /* ── Board ────────────────────────────────────── */
 .board {
@@ -1275,9 +1274,6 @@ body {
 
 /* ── Status badges ────────────────────────────── */
 .s-no-ref { background: var(--orange-bg); color: var(--orange); }
-.s-closed { background: var(--cyan-bg);   color: var(--cyan);   }
-
-.email-closed-card { border-left: 3px solid var(--cyan); }
 
 /* ── Card top row & list type badge ──────────── */
 .card-top-row {
@@ -2436,39 +2432,6 @@ body.light .date-in    { color-scheme: light; }
   --text2:     #80104a;
   --text3:     #a84070;
 }
-
-/* ── Incoming Expected vs Actual ──────────────── */
-.inc-expected {
-  font-size: 10px;
-  font-family: var(--mono);
-  color: var(--text3);
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-.inc-expected strong { color: var(--text2); }
-
-.inc-no-data {
-  font-style: italic;
-  color: var(--text3);
-  font-size: 10px;
-  margin-top: 6px;
-  font-family: var(--mono);
-}
-
-.inc-diff {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 700;
-  font-family: var(--mono);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-.inc-even  { background: var(--green-glow);  color: var(--green);  }
-.inc-over  { background: var(--blue-bg);     color: var(--blue);   }
-.inc-under { background: var(--yellow-bg);   color: var(--yellow); }
 
 /* ═══════════════════════════════════════════════
    BLACK THEME
