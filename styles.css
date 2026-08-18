@@ -22,8 +22,6 @@
   --orange-bg: rgba(249,115,22,.13);
   --purple:    #a855f7;
   --purple-bg: rgba(168,85,247,.13);
-  --cyan:      #22d3ee;
-  --cyan-bg:   rgba(34,211,238,.13);
   --text:      #d6edd9;
   --text2:     #7aaa87;
   --text3:     #4a7558;
@@ -1255,6 +1253,26 @@ body {
   border-bottom: none;
 }
 
+/* Photo/Agent/Offplan (light) and Completed (strong) highlight — mirrors
+   the Google Sheet's own highlighting so the on-screen table and the
+   spreadsheet read the same way at a glance. */
+.report-table th.hl-soft   { background: rgba(249,115,22,.10); color: var(--orange); }
+.report-table td.hl-soft   { background: rgba(249,115,22,.06); }
+.report-table th.hl-strong { background: rgba(249,115,22,.22); color: var(--orange); }
+.report-table td.hl-strong { background: rgba(249,115,22,.16); font-weight: 700; }
+.report-table tr.team-total td.hl-soft   { background: rgba(249,115,22,.10); }
+.report-table tr.team-total td.hl-strong { background: rgba(249,115,22,.24); }
+
+/* Assigned / In progress / On-hold — dimmer than the main columns since
+   they're 0 most of the time; a bare "0" in every row/every column reads
+   as noise, so zero values render blank (see num(...,true) in app.js)
+   and non-zero values still stand out via .num-faint's lighter weight. */
+.report-table td.num-faint { color: var(--text2); font-weight: 400; }
+
+@media (max-width: 900px) {
+  .report-table th, .report-table td { padding: 8px 8px; font-size: 11px; }
+}
+
 .rate-badge {
   display: inline-block;
   background: var(--blue-bg);
@@ -2432,6 +2450,39 @@ body.light .date-in    { color-scheme: light; }
   --text2:     #80104a;
   --text3:     #a84070;
 }
+
+/* ── Incoming Expected vs Actual ──────────────── */
+.inc-expected {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text3);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.inc-expected strong { color: var(--text2); }
+
+.inc-no-data {
+  font-style: italic;
+  color: var(--text3);
+  font-size: 10px;
+  margin-top: 6px;
+  font-family: var(--mono);
+}
+
+.inc-diff {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.inc-even  { background: var(--green-glow);  color: var(--green);  }
+.inc-over  { background: var(--blue-bg);     color: var(--blue);   }
+.inc-under { background: var(--yellow-bg);   color: var(--yellow); }
 
 /* ═══════════════════════════════════════════════
    BLACK THEME
