@@ -19,8 +19,7 @@ function getOrderedEditors() {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 var S = {
-  url:       'https://script.google.com/macros/s/AKfycbxRnU165B4OZoIyc-sDFrkQB-tePNsb9MBrMWJa7IRZuTWzzITQvxT6ES7eSCVzc6S-/exec',
-  assignUrl: 'https://script.google.com/macros/s/AKfycbzpHle7iubZvZTSEtY3yUGdtQIwiFaKIQFSkRBnYFHDgYku9Gyt-Iwb30jGduddY2K0/exec',
+  url:       'https://script.google.com/a/macros/drivenproperties.com/s/AKfycbxRnU165B4OZoIyc-sDFrkQB-tePNsb9MBrMWJa7IRZuTWzzITQvxT6ES7eSCVzc6S-/exec',
   data:      {},
   editors:   [],
   editor:    'all',
@@ -36,7 +35,7 @@ var S = {
 };
 
 // ─── Tabs to exclude from editor board/tabs ───────────────────────────────────
-var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments', 'Email Closed'];
+var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments'];
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -50,31 +49,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
   fetchData();
 
-  // Prefetch Assignment data in the background on load too — not just when
-  // the Assignment Dashboard tab is opened. Listing detail modals' History
-  // section (buildHistorySectionHtml) reads from ASSIGN_DATA regardless of
-  // which view is active, so without this, opening a modal before ever
-  // visiting the Assignment Dashboard would show "No history" simply
-  // because the data hadn't been fetched yet — not because none exists.
-  fetchAssignData(function() {
-    // Re-render only if a listing detail modal happens to already be open
-    // at the moment this resolves, so its History section picks up the
-    // freshly-arrived data instead of staying stuck on a pre-fetch render.
-    var modalBg = document.getElementById('modalBg');
-    if (modalBg && modalBg.style.display === 'flex' && typeof MODAL_ROW !== 'undefined' && MODAL_ROW) {
-      openModal(MODAL_ROW);
-    }
-  });
-
   document.getElementById('searchInput').addEventListener('input', function() {
     S.search = this.value.toLowerCase();
     render();
   });
 
   // ── View toggle ──────────────────────────────────────────────────────────────
-  document.querySelectorAll('.v-btn[data-view]').forEach(function(btn) {
+  document.querySelectorAll('.v-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
-      document.querySelectorAll('.v-btn[data-view]').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.v-btn').forEach(function(b) { b.classList.remove('active'); });
       btn.classList.add('active');
       S.view = btn.dataset.view;
       render();
@@ -136,7 +119,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('refreshBtn').addEventListener('click', function() {
     fetchData();
-    if (S.view === 'assigndash') fetchAssignData(function() { renderAssignDashboard(); });
   });
 
   // ── Amenities modal ───────────────────────────────────────────────────────
@@ -147,6 +129,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // ── Incoming requests edit ────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
     if (e.target && e.target.id === 'editIncomingBtn') openIncomingModal();
+    if (e.target && e.target.id === 'exportReportBtn') generateReportPPTX();
   });
 
   // ── Extension download modal ──────────────────────────────────────────────
@@ -170,7 +153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (S.url && document.visibilityState === 'visible') {
       fetchData(true);
     }
-  }, 8000); // Apps Script CacheService responds in ~100ms, so this is cheap to poll often
+  }, 20000); // fast — Apps Script CacheService ~100ms
 
 });
 
@@ -487,7 +470,7 @@ function applyRange() {
 }
 
 function rowInRange(row) {
-  var raw = row['Date Uploaded'] || row['Received Date'] || row['Date'] || row['Time Closed'];
+  var raw = row['Date Uploaded'] || row['Received Date'] || row['Date'];
   if (!raw) return true;
 
   var d = new Date(raw);
@@ -565,43 +548,11 @@ function rowMatch(r) {
     .some(function(f) { return r[f] && String(r[f]).toLowerCase().includes(s); });
 }
 
-// Email Closed rows live in their own tab with a different shape (no Ref,
-// Category, etc.), so they're gathered separately from getRows() rather than
-// forced through the same listing-shaped filter pipeline. Still respects the
-// current editor tab, date range, and search box (matched against Subject).
-function getEmailClosedRows(editor) {
-  var all  = S.data['Email Closed'] || [];
-  var base = editor === 'all'
-    ? all
-    : all.filter(function(r) { return String(r['Editor'] || '').trim() === editor; });
-
-  return base.filter(function(r) {
-    if (!rowInRange(r)) return false;
-    if (S.search && !(r['Subject'] && String(r['Subject']).toLowerCase().indexOf(S.search) !== -1)) return false;
-    return true;
-  });
-}
-
 // ─── Render dispatcher ────────────────────────────────────────────────────────
 function render() {
   renderTabs();
   var rows = getRows(S.editor);
   renderStats(rows);
-
-  var wasAssignDash = ASSIGN_DASH_VIEW_ACTIVE;
-  var isAssignDash = S.view === 'assigndash';
-
-  if (isAssignDash) {
-    hide('boardView'); hide('tableView'); hide('reportView'); show('assignDashView');
-    if (!wasAssignDash) {
-      ASSIGN_DASH_VIEW_ACTIVE = true;
-      openAssignDashboardView();
-    }
-    return; // the assignment dashboard manages its own re-renders (scope pills, clock, fetch)
-  }
-
-  if (wasAssignDash) { ASSIGN_DASH_VIEW_ACTIVE = false; assignStopClock(); assignStopPoll(); }
-  hide('assignDashView');
 
   if (S.view === 'board') {
     show('boardView'); hide('tableView'); hide('reportView');
@@ -652,18 +603,11 @@ function renderStats(rows) {
   var rejected = rows.filter(function(r) { return norm(r['Status']) === 'rejected'; }).length;
   var other    = total - uploaded - pending - rejected;
 
-  var emailClosed = getEmailClosedRows(S.editor).length;
-  // Total includes Email Closed (unlike Uploaded/Pending/Rejected/Other,
-  // which stay listing-only) — computed from the un-inflated `total` above
-  // so it doesn't skew the Other bucket.
-  var grandTotal = total + emailClosed;
-
   var items = [
-    { label:'Total',        val: grandTotal,  cls:''  },
-    { label:'Uploaded',     val: uploaded,     cls:'g' },
-    { label:'Pending',      val: pending,      cls:'y' },
-    { label:'Rejected',     val: rejected,     cls:'r' },
-    { label:'Email Closed', val: emailClosed,  cls:'c' },
+    { label:'Total',    val: total,    cls:'' },
+    { label:'Uploaded', val: uploaded, cls:'g' },
+    { label:'Pending',  val: pending,  cls:'y' },
+    { label:'Rejected', val: rejected, cls:'r' },
   ];
 
   if (other > 0) items.push({ label:'Other', val: other, cls:'b' });
@@ -704,9 +648,7 @@ function renderBoard(rows) {
   var board = document.getElementById('boardView');
   board.innerHTML = '';
 
-  var emailClosedAll = getEmailClosedRows(S.editor);
-
-  if (rows.length === 0 && emailClosedAll.length === 0) {
+  if (rows.length === 0) {
     board.innerHTML = '<div class="no-results">No listings match the current filters.</div>';
     return;
   }
@@ -715,8 +657,7 @@ function renderBoard(rows) {
     var ordered = getOrderedEditors();
     ordered.forEach(function(editor) {
       var edRows = rows.filter(function(r) { return r._editor === editor; });
-      var edEmailClosed = getEmailClosedRows(editor);
-      board.appendChild(makeColumn(editor, edRows, edEmailClosed));
+      board.appendChild(makeColumn(editor, edRows));
     });
     initDragColumns(board);
   } else {
@@ -731,20 +672,12 @@ function renderBoard(rows) {
       var sRows = rows.filter(function(r) { return (r['Status'] || '—') === status; });
       board.appendChild(makeColumn(status, sRows));
     });
-    // Email Closed entries have no Status, so they don't belong in any of the
-    // status columns above — they get their own column instead, same as any
-    // other status bucket, only shown when this editor actually has any.
-    if (emailClosedAll.length) {
-      board.appendChild(makeColumn('Email Closed', [], emailClosedAll));
-    }
   }
 }
 
-function makeColumn(title, rows, emailClosedRows) {
-  emailClosedRows = emailClosedRows || [];
+function makeColumn(title, rows) {
   var col = document.createElement('div');
-  var totalCount = rows.length + emailClosedRows.length;
-  var isEmpty = totalCount === 0;
+  var isEmpty = rows.length === 0;
   col.className = 'col ' + (isEmpty ? 'collapsed' : 'open');
 
   var header = document.createElement('div');
@@ -753,7 +686,7 @@ function makeColumn(title, rows, emailClosedRows) {
     + '<span class="col-drag-handle" title="Drag to reorder">⠿</span>'
     + '<span class="col-name">' + esc(title) + '</span>'
     + '</div>'
-    + '<span class="col-count">' + totalCount + '</span>';
+    + '<span class="col-count">' + rows.length + '</span>';
 
   // Click anywhere on header (except drag handle) to collapse/expand
   header.addEventListener('click', function(e) {
@@ -768,50 +701,15 @@ function makeColumn(title, rows, emailClosedRows) {
   var body = document.createElement('div');
   body.className = 'col-body';
 
-  if (totalCount === 0) {
+  if (rows.length === 0) {
     body.innerHTML = '<div class="col-empty">No listings</div>';
   } else {
-    // Merge listing cards and Email Closed cards into one chronological
-    // feed (newest first) rather than showing Email Closed as a separate
-    // block, so a column reads as "everything this editor did, in order."
-    var merged = rows.map(function(r) {
-      return { kind: 'listing', row: r, date: parseAnyDate(r['Date Uploaded']) };
-    }).concat(emailClosedRows.map(function(r) {
-      return { kind: 'emailClosed', row: r, date: parseAnyDate(r['Time Closed']) };
-    }));
-
-    merged.sort(function(a, b) {
-      if (!a.date && !b.date) return 0;
-      if (!a.date) return 1;
-      if (!b.date) return -1;
-      return b.date - a.date;
-    });
-
-    merged.forEach(function(item) {
-      body.appendChild(item.kind === 'emailClosed' ? makeEmailClosedCard(item.row) : makeCard(item.row));
-    });
+    sortNewest(rows).forEach(function(row) { body.appendChild(makeCard(row)); });
   }
 
   col.appendChild(header);
   col.appendChild(body);
   return col;
-}
-
-function makeEmailClosedCard(row) {
-  var card = document.createElement('div');
-  card.className = 'listing-card email-closed-card';
-
-  card.innerHTML =
-    '<div class="card-top-row">'
-    +   '<div class="card-req">📧 Email</div>'
-    + '</div>'
-    + '<div class="card-loc">' + esc(row['Subject'] || '—') + '</div>'
-    + '<div class="card-footer">'
-    +   '<span class="card-date">' + esc(fmtDateFull(row['Time Closed'])) + '</span>'
-    +   '<span class="sbadge s-closed">Closed</span>'
-    + '</div>';
-
-  return card;
 }
 
 function makeCard(row) {
@@ -992,7 +890,7 @@ function openModal(row) {
 
   html += '</div>';
 
-    html += buildHistorySectionHtml(row['DP-REQ Number']);
+  html += buildHistorySectionHtml(row['DP-REQ Number']);
 
   if (row._editor) {
     html += '<div class="modal-editor">Editor tab: ' + esc(row._editor) + '</div>';
@@ -1003,73 +901,17 @@ function openModal(row) {
 }
 
 // ─── Assigner history (from the merged "Assignments" tab) ─────────────────────
-// Joined on Listing Reference (Copier) === Ref (Assigner) — same DP-R/DP-S value
-// in both sheets.
-//
-// Preferred path: Apps Script now writes every assign/reassign/start/hold/
-// complete/reject/download/recategorize as its own immutable entry in the
-// row's History column (a JSON array), specifically so reassigning a
-// listing — or auto-reopening a Rejected one once new photos land under a
-// different category — no longer erases whoever/whatever came before.
-// Falls back to reconstructing from the flat AssignedAt/StartedAt/etc.
-// columns (the old approach — only ever shows the single most recent
-// assignment/reassignment) for any row that hasn't been touched since that
-// column was added.
-var HISTORY_EVENT_META = {
-  assigned:      { label: 'Assigned',      type: 'assigned' },
-  started:       { label: 'Started',       type: 'started' },
-  onhold:        { label: 'On hold',       type: 'onhold' },
-  completed:     { label: 'Completed',     type: 'completed' },
-  rejected:      { label: 'Rejected',      type: 'rejected' },
-  downloaded:    { label: 'Downloaded',    type: 'downloaded' },
-  reassigned:    { label: 'Reassigned',    type: 'reassigned' },
-  unassigned:    { label: 'Unassigned',    type: 'unassigned' },
-  recategorized: { label: 'Recategorized', type: 'recategorized' },
-  downloaded_cleared: { label: 'Download cleared', type: 'downloaded_cleared' },
-};
-
-function metaForHistoryEvent(ev) {
-  switch (ev.type) {
-    case 'assigned':      return ev.editor ? ('to ' + ev.editor) : '';
-    case 'reassigned':    return (ev.from && ev.to ? (ev.from + ' \u2192 ' + ev.to) : '') + (ev.by ? (' by ' + ev.by) : '');
-    case 'unassigned':    return ev.editor ? ('was ' + ev.editor) : '';
-    case 'onhold':        return ev.reason || '';
-    case 'recategorized': return (ev.from && ev.to) ? (ev.from + ' \u2192 ' + ev.to) : '';
-    case 'downloaded_cleared': return ev.reason || '';
-    case 'started': case 'completed': case 'rejected': case 'downloaded':
-      return ev.editor ? ('by ' + ev.editor) : '';
-    default: return '';
-  }
-}
-
-function parseAssignmentHistory(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw; // ASSIGN_DATA already parses this server-side
-  try {
-    var parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-}
-
+// Joined on DP-REQ Number (Copier) === Ref (Assigner) — same DP-REQ-xxxxx value
+// in both sheets. Builds a chronological dot timeline from whichever of
+// Assigned/Reassigned/Started/On Hold/Completed/Rejected the matched row has.
 function buildHistorySectionHtml(ref) {
   var html = '<div class="history-section">'
     + '<div class="d-label">History</div>';
 
-  // Assignments now lives on its own dedicated backend (ASSIGN_DATA, fetched
-  // from S.assignUrl) rather than S.data['Assignments'] — that tab no
-  // longer exists in the Copier spreadsheet/script at all since the split,
-  // so a lookup against S.data would always come back empty here.
-  var rows = (ASSIGN_DATA && Array.isArray(ASSIGN_DATA.assignments)) ? ASSIGN_DATA.assignments : [];
+  var rows = (S.data && S.data['Assignments']) || [];
   var match = null;
-  // Search from the END — a Ref can now have more than one row (see the
-  // Apps Script's reopenOnCategoryChange, which appends a fresh row instead
-  // of overwriting on a rework cycle), and new rows are always appended
-  // after old ones. The first match would silently grab an old, permanently
-  // -preserved Rejected/Completed cycle instead of the current one.
-  for (var i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].ref === ref) { match = rows[i]; break; }
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i]['Ref'] === ref) { match = rows[i]; break; }
   }
 
   if (!match) {
@@ -1078,84 +920,66 @@ function buildHistorySectionHtml(ref) {
   }
 
   var events = [];
-  var log = parseAssignmentHistory(match.history);
 
-  if (log.length > 0) {
-    events = log
-      .filter(function(ev) { return ev && ev.ts && HISTORY_EVENT_META[ev.type]; })
-      .map(function(ev) {
-        return {
-          at:    ev.ts,
-          type:  HISTORY_EVENT_META[ev.type].type,
-          label: HISTORY_EVENT_META[ev.type].label,
-          meta:  metaForHistoryEvent(ev),
-        };
-      });
-  } else {
-    // Fallback for listings whose last write happened before the History
-    // column existed. Field names are camelCase here (ASSIGN_DATA's own
-    // shape from getAssignerAssignments), not the PascalCase sheet-header
-    // names S.data used to carry.
-    if (match.assignedAt) {
-      // If this listing was later reassigned, the "assigned to" name for this
-      // very first event is who it was ORIGINALLY given to — reassignedFrom —
-      // not the current editor, which by then has already moved on.
-      var firstEditor = match.reassignedFrom || match.editor || '';
-      events.push({
-        at:    match.assignedAt,
-        type:  'assigned',
-        label: 'Assigned',
-        meta:  firstEditor ? ('to ' + firstEditor) : '',
-      });
-    }
+  if (match['AssignedAt']) {
+    // If this listing was later reassigned, the "assigned to" name for this
+    // very first event is who it was ORIGINALLY given to — ReassignedFrom —
+    // not the current Editor, which by then has already moved on.
+    var firstEditor = match['ReassignedFrom'] || match['Editor'] || '';
+    events.push({
+      at:    match['AssignedAt'],
+      type:  'assigned',
+      label: 'Assigned',
+      meta:  firstEditor ? ('to ' + firstEditor) : '',
+    });
+  }
 
-    if (match.reassignedAt) {
-      var from = match.reassignedFrom || '?';
-      var to   = match.reassignedTo   || '?';
-      var by   = match.reassignedBy;
-      events.push({
-        at:    match.reassignedAt,
-        type:  'reassigned',
-        label: 'Reassigned',
-        meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
-      });
-    }
+  if (match['ReassignedAt']) {
+    var from = match['ReassignedFrom'] || '?';
+    var to   = match['ReassignedTo']   || '?';
+    var by   = match['ReassignedBy'];
+    events.push({
+      at:    match['ReassignedAt'],
+      type:  'reassigned',
+      label: 'Reassigned',
+      meta:  from + ' \u2192 ' + to + (by ? (' by ' + by) : ''),
+    });
+  }
 
-    if (match.startedAt) {
-      events.push({
-        at:    match.startedAt,
-        type:  'started',
-        label: 'Started',
-        meta:  '',
-      });
-    }
+  if (match['StartedAt']) {
+    events.push({
+      at:    match['StartedAt'],
+      type:  'started',
+      label: 'Started',
+      meta:  '',
+    });
+  }
 
-    if (match.onHoldAt) {
-      events.push({
-        at:    match.onHoldAt,
-        type:  'onhold',
-        label: 'On hold',
-        meta:  match.onHoldReason || '',
-      });
-    }
+  if (match['OnHoldAt']) {
+    events.push({
+      at:    match['OnHoldAt'],
+      type:  'onhold',
+      label: 'On hold',
+      meta:  match['OnHoldReason'] || '',
+    });
+  }
 
-    if (match.completedAt) {
-      events.push({
-        at:    match.completedAt,
-        type:  'completed',
-        label: 'Completed',
-        meta:  '',
-      });
-    }
+  if (match['CompletedAt']) {
+    events.push({
+      at:    match['CompletedAt'],
+      type:  'completed',
+      label: 'Completed',
+      meta:  '',
+    });
+  }
 
-    if (match.rejectedAt) {
-      events.push({
-        at:    match.rejectedAt,
-        type:  'rejected',
-        label: 'Rejected',
-        meta:  '',
-      });
-    }
+  if (match['RejectedAt']) {
+    events.push({
+      at:    match['RejectedAt'],
+      type:  'rejected',
+      label: 'Rejected',
+      meta:  '',
+    });
   }
 
   if (!events.length) {
@@ -1439,10 +1263,6 @@ function renderReport() {
   var actualProfile   = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Profile'],  10)||0); }, 0);
   var actualOthers    = lifestyleRows.reduce(function(s,r) { return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0); }, 0);
 
-  // Email Closed — unlike Lifestyle/Profile/Others, this DOES roll into Total
-  // (see editorBreakdown/team below), per how it's meant to read next to Rejected.
-  var emailClosedRows = (S.data['Email Closed'] || []).filter(rowInRange);
-
   var incoming = getIncomingForRange();
   var expPhoto = incoming ? (parseInt(incoming['Photo Request'],10)||0) : null;
   var expAgent = incoming ? (parseInt(incoming['Agent Request'],10)||0) : null;
@@ -1475,37 +1295,32 @@ function renderReport() {
     var rows    = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor},r); }).filter(rowInRange);
     var nonRej  = rows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
     var lRows   = lifestyleRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
-    var ecRows  = emailClosedRows.filter(function(r) { return String(r['Editor']||'').trim() === editor; });
     return {
-      editor:      editor,
-      photo:       nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
-      agent:       nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
-      broch:       nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
-      rejected:    rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
-      emailClosed: ecRows.length,
-      lifestyle:   lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
-      profile:     lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
-      others:      lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
-      // Email Closed rolls into Total (unlike Lifestyle/Profile/Others, which
-      // are tracked separately) — per how it's meant to sit next to Rejected.
-      total:       rows.length + ecRows.length,
+      editor:    editor,
+      photo:     nonRej.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length,
+      agent:     nonRej.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length,
+      broch:     nonRej.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length,
+      rejected:  rows.filter(function(r)   { return norm(r['Status'])   === 'rejected'; }).length,
+      lifestyle: lRows.reduce(function(s,r){return s+(parseInt(r['Lifestyle'],10)||0);},0),
+      profile:   lRows.reduce(function(s,r){return s+(parseInt(r['Profile'],  10)||0);},0),
+      others:    lRows.reduce(function(s,r){return s+(parseInt(r['Others'],   10)||0)+(parseInt(r['Count'],10)||0);},0),
+      total:     rows.length,
     };
   }).filter(function(r) { return r.total + r.lifestyle + r.profile + r.others > 0; })
     .sort(function(a,b) { return (b.total+b.lifestyle+b.profile+b.others)-(a.total+a.lifestyle+a.profile+a.others); });
 
   var team = editorBreakdown.reduce(function(s,r) {
     return {
-      photo:       s.photo       + r.photo,
-      agent:       s.agent       + r.agent,
-      broch:       s.broch       + r.broch,
-      rejected:    s.rejected    + r.rejected,
-      emailClosed: s.emailClosed + r.emailClosed,
-      lifestyle:   s.lifestyle   + r.lifestyle,
-      profile:     s.profile     + r.profile,
-      others:      s.others      + r.others,
-      total:       s.total       + r.total,
+      photo:     s.photo     + r.photo,
+      agent:     s.agent     + r.agent,
+      broch:     s.broch     + r.broch,
+      rejected:  s.rejected  + r.rejected,
+      lifestyle: s.lifestyle + r.lifestyle,
+      profile:   s.profile   + r.profile,
+      others:    s.others    + r.others,
+      total:     s.total     + r.total,
     };
-  }, {photo:0,agent:0,broch:0,rejected:0,emailClosed:0,lifestyle:0,profile:0,others:0,total:0});
+  }, {photo:0,agent:0,broch:0,rejected:0,lifestyle:0,profile:0,others:0,total:0});
 
   function num(v, color) {
     var style = color ? ' style="color:' + color + '"' : '';
@@ -1517,14 +1332,12 @@ function renderReport() {
       + '<td class="editor-name">' + esc(r.editor) + '</td>'
       + num(r.photo) + num(r.agent) + num(r.broch)
       + num(r.rejected, r.rejected > 0 ? 'var(--red)' : null)
-      + num(r.emailClosed, r.emailClosed > 0 ? 'var(--cyan)' : null)
-      + num(r.lifestyle,'var(--purple)') + num(r.profile,'var(--blue)') + num(r.others,'var(--orange)')
       + num(r.total)
       + '</tr>';
   }).join('');
 
-  // colspan for pending/rate rows = 8 (photo+agent+offplan+rejected+emailClosed+lifestyle+profile+others)
-  var footColspan = '8';
+  // colspan for pending/rate rows = 4 (photo+agent+offplan+rejected)
+  var footColspan = '4';
 
   wrap.innerHTML =
     '<div class="report-header">'
@@ -1533,6 +1346,7 @@ function renderReport() {
     +   '<div class="report-subtitle">' + esc(getRangeLabel()) + '</div>'
     + '</div>'
     + '<button class="modal-edit-btn" id="editIncomingBtn" style="height:32px;padding:0 14px;font-size:12px;">✏️ Morning Input</button>'
+    +   '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;margin-left:8px;">📄 Export Report</button>'
     + '</div>'
 
     + '<div class="report-incoming">'
@@ -1541,15 +1355,12 @@ function renderReport() {
     +     incCard('📷 Photographer Photos',   actualPhoto,     expPhoto, 'blue')
     +     incCard('🏠 Agent Property Photos',  actualAgent,     expAgent, 'orange')
     +     incCard('📄 Offplan / Brochure',     actualBroch,     expBroch, 'green')
-    // FEATURE 1 — Rejected card between Offplan and Lifestyle
+    // FEATURE 1 — Rejected card between Offplan and Total
     +     '<div class="incoming-item">'
     +       '<div class="i-label">❌ Rejected</div>'
     +       '<div class="i-val" style="color:var(--red)">' + actualRej + '</div>'
     +       '<div class="inc-expected inc-no-data">Independent metric</div>'
     +     '</div>'
-    +     incCard('🎬 Lifestyle',              actualLifestyle, expLife,  '')
-    +     incCard('👤 Profile',                actualProfile,   expProf,  '')
-    +     incCard('📦 Others',                 actualOthers,    expOth,   '')
     +     '<div class="incoming-item">'
     +       '<div class="i-label">Total Processed</div>'
     +       '<div class="i-val white">' + actualTotal + '</div>'
@@ -1563,12 +1374,8 @@ function renderReport() {
     + '<div class="report-table-wrap">'
     +   '<table class="report-table"><thead><tr>'
     +     '<th>Editor</th><th>Photo</th><th>Agent</th><th>Offplan</th>'
-    // FEATURE 2 — Rejected column between Offplan and Lifestyle
+    // FEATURE 2 — Rejected column between Offplan and Total
     +     '<th style="color:var(--red)">Rejected</th>'
-    +     '<th style="color:var(--cyan)">Email Closed</th>'
-    +     '<th style="color:var(--purple)">Lifestyle</th>'
-    +     '<th style="color:var(--blue)">Profile</th>'
-    +     '<th style="color:var(--orange)">Others</th>'
     +     '<th>Total</th>'
     +   '</tr></thead><tbody>'
     +   editorRows
@@ -1576,8 +1383,6 @@ function renderReport() {
     +   '<tr class="team-total"><td>Team Total</td>'
     +     num(team.photo) + num(team.agent) + num(team.broch)
     +     num(team.rejected, team.rejected > 0 ? 'var(--red)' : null)
-    +     num(team.emailClosed, team.emailClosed > 0 ? 'var(--cyan)' : null)
-    +     num(team.lifestyle,'var(--purple)') + num(team.profile,'var(--blue)') + num(team.others,'var(--orange)')
     +     num(team.total)
     +   '</tr>'
     // FEATURE 5 — Pending and Completion Rate unchanged
@@ -2249,781 +2054,207 @@ function clearFilters() {
   updateFilterBadge();
   render();
 }
-// ═══════════════════════════════════════════════════════════════════════
-// ASSIGNMENT DASHBOARD
-// Ported from the DP Toolkit Chrome extension's "Assignment Dashboard".
-// Reads the same "Assignments" tab through the same Apps Script deployment
-// this app already uses (S.url), via the token-authenticated GET endpoint
-// (?token=DPPE) — the same one the extension itself calls — rather than
-// the ?action=getData endpoint the rest of this dashboard uses for the
-// Copier sheet data.
-// ═══════════════════════════════════════════════════════════════════════
-
-var ASSIGN_TOKEN = 'DPPE';
-var ASSIGN_CATEGORY_OPTIONS = ['Offplan Pending', 'Photos For QC', 'Stock Photos For QC', 'Upload Pending', 'Re-shoot'];
-var ASSIGN_BED_TRACKED_CATEGORIES = ['Upload Pending'];
-var ASSIGN_BED_BUCKETS = ['0', '1', '2', '3', '4', '5+', '?'];
-var ASSIGN_DATA = { assignments: [], loaded: false };
-// enabled: the toggle's own on/off state. withinWindow: whether it's
-// currently 9:00-17:30 Dubai time. active: enabled && withinWindow — this
-// is what the 3-state indicator actually shows, since "enabled but outside
-// hours" (Paused) is a normal expected state, not the same as fully Off.
-var AUTO_ASSIGN_STATUS = { enabled: false, withinWindow: false, active: false, roster: [], loaded: false };
-var ASSIGN_DASH_VIEW_ACTIVE = false;
-var ASSIGN_POLL_INTERVAL = null;
-var ASSIGN_SCOPE = 'today'; // 'today' | 'yesterday' | 'week' | 'all' | { type:'custom', start, end }
-var ASSIGN_CUSTOM_DRAFT = { start: '', end: '' };
-var ASSIGN_CLOCK_INTERVAL = null;
-
-function assignBedroomChipLabel(val) { return val === '0' ? 'Studio' : val === '?' ? 'Unknown' : val; }
-
-function assignFmtRelative(iso) {
-  if (!iso) return '';
-  var d = new Date(iso);
-  if (isNaN(d)) return '';
-  var mins = Math.round((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return mins + 'm ago';
-  var hrs = Math.round(mins / 60);
-  if (hrs < 24) return hrs + 'h ago';
-  return Math.round(hrs / 24) + 'd ago';
-}
-
-function assignStartOfLocalDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
-function assignAddDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
-
-// Turns a scope descriptor into a [start, end) local-time range, or null
-// for "all" (no filtering). Mirrors the extension's scopeToRange exactly,
-// including "week" being a rolling last-7-days window ending yesterday.
-function assignScopeToRange(scope) {
-  var now = new Date();
-  if (scope === 'today') {
-    var s1 = assignStartOfLocalDay(now);
-    return [s1, assignAddDays(s1, 1)];
+// ─── PPTX Export ────────────────────────────────────────────────────────────
+// Builds an editable PowerPoint (title / summary+breakdown / rejected detail)
+// scoped to whatever date range + editor tab is currently active on screen.
+// Palette: Coolors "0a0908-22333b-f2f4f3-a9927d-5e503f"
+function generateReportPPTX() {
+  if (typeof PptxGenJS === 'undefined') {
+    alert('Export library failed to load. Check your internet connection and try again.');
+    return;
   }
-  if (scope === 'yesterday') {
-    var s2 = assignAddDays(assignStartOfLocalDay(now), -1);
-    return [s2, assignAddDays(s2, 1)];
-  }
-  if (scope === 'week') {
-    var yest = assignAddDays(assignStartOfLocalDay(now), -1);
-    var s3 = assignAddDays(yest, -6);
-    return [s3, assignAddDays(yest, 1)];
-  }
-  if (scope === 'thisweek') {
-    // Full calendar week, Monday through Sunday — not clipped to today.
-    // Mirrors the extension's startOfWeekMonday()/scopeToRange("thisWeek").
-    var day0 = assignStartOfLocalDay(now).getDay(); // 0=Sun..6=Sat
-    var monday = assignAddDays(assignStartOfLocalDay(now), -((day0 + 6) % 7));
-    return [monday, assignAddDays(monday, 7)];
-  }
-  if (scope === 'month') {
-    // 1st of the current month through the end of TODAY (month-to-date,
-    // not the full calendar month) — e.g. on Aug 13 this is Aug 1–13, and
-    // on Aug 14 it's automatically Aug 1–14 with no code change needed,
-    // since both ends are computed fresh from "now" every time this runs.
-    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    return [monthStart, assignAddDays(assignStartOfLocalDay(now), 1)];
-  }
-  if (scope && scope.type === 'custom') {
-    if (!scope.start || !scope.end) return null;
-    var s4 = new Date(scope.start + 'T00:00:00');
-    var e4 = new Date(scope.end + 'T00:00:00');
-    if (isNaN(s4) || isNaN(e4)) return null;
-    return [s4, assignAddDays(e4, 1)];
-  }
-  return null; // "all"
-}
 
-function assignIsWithinRange(iso, range) {
-  if (!range) return true;
-  if (!iso) return false;
-  var d = new Date(iso);
-  if (isNaN(d)) return false;
-  return d >= range[0] && d < range[1];
-}
+  var BG        = 'F2F4F3'; // White Smoke — page background
+  var PANEL     = 'FFFFFF';
+  var PANEL2    = 'EDEAE5'; // header / team-total row
+  var LIGHT_HL  = 'F6EFE4'; // Photo/Agent/Offplan light highlight
+  var STRONG_HL = 'E9D9BC'; // Completed strong highlight
+  var BORDER    = 'D9D2C7';
+  var INK       = '0A0908'; // Black — primary text
+  var JET       = '22333B'; // Jet Black — headers / dark accent
+  var TAUPE     = 'A9927D'; // Dusty Taupe — accent
+  var BROWN     = '5E503F'; // Stone Brown — muted text
+  var RED       = 'B3452F'; // rejected
+  var FONT      = 'Calibri';
+  var W = 13.33, H = 7.5;
 
-// Collapses whitespace (including non-breaking spaces picked up from the
-// CRM page's DOM text) before comparing a stored Category value against
-// ASSIGN_CATEGORY_OPTIONS.
-function assignNormCategory(v) { return (v || '').replace(/\s+/g, ' ').trim(); }
+  // ── Gather data for the current filter (same source as the on-screen report) ──
+  var allRows  = getAllRows().filter(rowInRange);
+  var rejectedRows = allRows.filter(function(r) { return norm(r['Status']) === 'rejected'; });
 
-function assignEmptyCategoryTally() {
-  var t = {};
-  ASSIGN_CATEGORY_OPTIONS.forEach(function(c) {
-    t[c] = {
-      completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0, beds: {},
-      // Individual DP-REQ refs behind each count, so a cell's number can
-      // be clicked to reveal exactly which listings it's made of.
-      refs: { completed: [], pending: [], onHold: [], rejected: [] },
+  var editorBreakdown = S.editors.map(function(editor) {
+    var rows = (S.data[editor] || []).map(function(r) { return Object.assign({_editor:editor}, r); }).filter(rowInRange);
+    var uploadedRows = rows.filter(function(r) { return norm(r['Status']) === 'uploaded'; });
+    var photo   = uploadedRows.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length;
+    var agent   = uploadedRows.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
+    var offplan = uploadedRows.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length;
+    return {
+      editor:     editor,
+      photo:      photo,
+      agent:      agent,
+      offplan:    offplan,
+      completed:  photo + agent + offplan,
+      inProgress: rows.filter(function(r) { return norm(r['Status']) === 'ongoing'; }).length,
+      onHold:     rows.filter(function(r) { return norm(r['Status']) === 'pending'; }).length,
+      rejected:   rows.filter(function(r) { return norm(r['Status']) === 'rejected'; }).length,
+      total:      rows.length,
+    };
+  }).filter(function(r) { return r.total > 0; });
+
+  var team = editorBreakdown.reduce(function(s, r) {
+    return {
+      photo: s.photo+r.photo, agent: s.agent+r.agent, offplan: s.offplan+r.offplan,
+      completed: s.completed+r.completed, inProgress: s.inProgress+r.inProgress,
+      onHold: s.onHold+r.onHold, rejected: s.rejected+r.rejected, total: s.total+r.total,
+    };
+  }, {photo:0,agent:0,offplan:0,completed:0,inProgress:0,onHold:0,rejected:0,total:0});
+
+  // Completion Rate = Uploaded ÷ Total — identical formula to the on-screen report
+  var compRate = team.total > 0 ? Math.round(team.completed / team.total * 100) : 0;
+
+  var kpis = [
+    { label: 'Total Processed', val: String(team.total), color: INK },
+    { label: 'Uploaded',        val: String(team.completed), color: JET },
+    { label: 'Pending',         val: String(team.inProgress + team.onHold), color: TAUPE },
+    { label: 'Rejected',        val: String(team.rejected), color: RED },
+    { label: 'Completion Rate', val: compRate + '%', color: BROWN },
+  ];
+
+  var rejections = rejectedRows.map(function(r) {
+    return {
+      req:    r['DP-REQ Number']     || '—',
+      ref:    r['Listing Reference'] || '—',
+      editor: r._editor              || '—',
+      reason: r['Rejection Reason']  || 'No reason recorded',
     };
   });
-  return t;
-}
 
-function computeAssignDashboardStats(scope) {
-  var range = assignScopeToRange(scope);
-  var byEditor = {};
-  var team = { categories: assignEmptyCategoryTally(), total: 0 };
-  var unassigned = { categories: assignEmptyCategoryTally(), total: 0, latest: null };
-  var uncategorized = 0;
+  var rangeLabel = getRangeLabel();
+  var now = new Date();
+  var generatedAt = 'Generated ' + now.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
+    + ', ' + now.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
 
-  ASSIGN_DATA.assignments.forEach(function(entry) {
-    if (!entry || !entry.status) return;
+  // ── Build deck ──────────────────────────────────────────────────────────
+  var pres = new PptxGenJS();
+  pres.layout = 'LAYOUT_WIDE';
 
-    // Unassigned-but-on-hold listings have no assignedAt — use onHoldAt
-    // instead so date-range scoping still works for them.
-    var scopeTimestamp = entry.assignedAt || entry.onHoldAt || '';
-    if (!assignIsWithinRange(scopeTimestamp, range)) return;
-
-    var bedBucket = entry.bedrooms || '';
-    var crmNorm = assignNormCategory(entry.crmStatus);
-    var category = (crmNorm && ASSIGN_CATEGORY_OPTIONS.indexOf(crmNorm) > -1) ? crmNorm : '';
-    if (!category) { uncategorized++; return; } // not one of the tracked categories — excluded
-    if (!bedBucket) bedBucket = '?';
-
-    var editor = entry.editor || '';
-    var status = entry.status || '';
-    var bucket = status === 'Completed' ? 'completed' : status === 'Rejected' ? 'rejected' :
-      status === 'On Hold' ? 'onHold' : 'pending';
-
-    var target = editor
-      ? (byEditor[editor] || (byEditor[editor] = { total: 0, latest: null, categories: assignEmptyCategoryTally() }))
-      : unassigned;
-
-    target.total++;
-    target.categories[category][bucket]++;
-    target.categories[category].total++;
-    target.categories[category].refs[bucket].push(entry.ref);
-
-    if (editor) {
-      team.categories[category][bucket]++;
-      team.categories[category].total++;
-      team.categories[category].refs[bucket].push(entry.ref);
-      team.total++;
-    }
-
-    if (ASSIGN_BED_TRACKED_CATEGORIES.indexOf(category) > -1) {
-      target.categories[category].beds[bedBucket] = (target.categories[category].beds[bedBucket] || 0) + 1;
-      if (editor) team.categories[category].beds[bedBucket] = (team.categories[category].beds[bedBucket] || 0) + 1;
-    }
-
-    if (scopeTimestamp && (!target.latest || new Date(scopeTimestamp) > new Date(target.latest.assignedAt))) {
-      target.latest = { ref: entry.ref, bedBucket: bedBucket, crmStatus: category, assignedAt: scopeTimestamp };
-    }
-  });
-
-  return { byEditor: byEditor, team: team, unassigned: unassigned, uncategorized: uncategorized };
-}
-
-// ── HTML builders (string-based, matching renderReport()'s style; reuses
-// the .report-table / .report-table-wrap classes already defined for the
-// RPT view so this looks native to the rest of the dashboard) ────────────
-
-// Registry mapping a short id -> {title, refs}, rebuilt on every render so
-// the clickable stat buttons (wired via delegated click listener below,
-// since this dashboard is built from HTML strings rather than DOM nodes
-// with attached handlers) can look up which refs a given button represents.
-var ASSIGN_REFS_REGISTRY = {};
-var ASSIGN_REFS_COUNTER = 0;
-
-function assignRegisterRefs(title, refs) {
-  ASSIGN_REFS_COUNTER++;
-  var id = 'r' + ASSIGN_REFS_COUNTER;
-  ASSIGN_REFS_REGISTRY[id] = { title: title, refs: refs };
-  return id;
-}
-
-function assignNumCell(v, refs, title) {
-  if (v > 0 && refs && refs.length > 0) {
-    var id = assignRegisterRefs(title, refs);
-    return '<td class="num-cell"><button type="button" class="dp-dash-stat-btn" data-refs-id="' + id
-      + '" title="Click to see reference numbers">' + v + '</button></td>';
+  function bgSlide() {
+    var s = pres.addSlide();
+    s.background = { color: BG };
+    return s;
   }
-  return '<td class="num-cell' + (v === 0 ? ' num-zero' : '') + '">' + (v || '\u2013') + '</td>';
-}
+  function footer(s, pageLabel) {
+    s.addText('DP Photo Editors Studio', { x:0.5, y:H-0.45, w:6, h:0.3, fontFace:FONT, fontSize:9, color:BROWN });
+    s.addText(pageLabel, { x:W-6.5, y:H-0.45, w:6, h:0.3, align:'right', fontFace:FONT, fontSize:9, color:BROWN });
+  }
 
-function assignCategoryTableHtml(categories, ownerLabel) {
-  var emptyRefs = { completed: [], pending: [], onHold: [], rejected: [] };
-  var sums = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
-  var sumRefs = { completed: [], pending: [], onHold: [], rejected: [] };
-  var rows = ASSIGN_CATEGORY_OPTIONS.map(function(cat) {
-    var d = categories[cat] || { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
-    var refs = d.refs || emptyRefs;
-    sums.completed += d.completed; sums.pending += d.pending; sums.onHold += d.onHold;
-    sums.rejected += d.rejected; sums.total += d.total;
-    sumRefs.completed = sumRefs.completed.concat(refs.completed);
-    sumRefs.pending = sumRefs.pending.concat(refs.pending);
-    sumRefs.onHold = sumRefs.onHold.concat(refs.onHold);
-    sumRefs.rejected = sumRefs.rejected.concat(refs.rejected);
-    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
-    return '<tr>'
-      + '<td class="editor-name">' + esc(cat) + '</td>'
-      + assignNumCell(d.completed, refs.completed, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Completed')
-      + assignNumCell(d.pending, refs.pending, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Pending')
-      + assignNumCell(d.onHold, refs.onHold, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 On Hold')
-      + assignNumCell(d.rejected, refs.rejected, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Rejected')
-      + assignNumCell(d.total, rowAllRefs, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 All statuses')
-      + '</tr>';
-  }).join('');
+  // Slide 1 — Title
+  (function() {
+    var s = bgSlide();
+    s.addShape('rect', { x:0, y:0, w:0.12, h:H, fill:{ color: TAUPE } });
+    s.addText('DP PHOTO EDITORS STUDIO', { x:0.9, y:2.55, w:11.5, h:0.4, fontFace:FONT, fontSize:14, color:BROWN, charSpacing:3, bold:true });
+    s.addText('Daily Report', { x:0.85, y:2.9, w:11.5, h:1.1, fontFace:FONT, fontSize:44, color:INK, bold:true });
+    s.addText(rangeLabel, { x:0.9, y:3.95, w:11.5, h:0.5, fontFace:FONT, fontSize:20, color:JET });
+    s.addText(generatedAt, { x:0.9, y:4.45, w:11.5, h:0.4, fontFace:FONT, fontSize:12, color:BROWN });
+  })();
 
-  var grandAllRefs = sumRefs.completed.concat(sumRefs.pending, sumRefs.onHold, sumRefs.rejected);
-  return '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
-    + '<th>Category</th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
-    + '</tr></thead><tbody>'
-    + rows
-    + '<tr class="team-total"><td>Total</td>'
-    + assignNumCell(sums.completed, sumRefs.completed, ownerLabel + ' \u00B7 Completed')
-    + assignNumCell(sums.pending, sumRefs.pending, ownerLabel + ' \u00B7 Pending')
-    + assignNumCell(sums.onHold, sumRefs.onHold, ownerLabel + ' \u00B7 On Hold')
-    + assignNumCell(sums.rejected, sumRefs.rejected, ownerLabel + ' \u00B7 Rejected')
-    + assignNumCell(sums.total, grandAllRefs, ownerLabel + ' \u00B7 All statuses')
-    + '</tr></tbody></table></div>';
-}
+  // Slide 2 — Summary + Editor Breakdown
+  (function() {
+    var s = bgSlide();
+    s.addText('Summary', { x:0.6, y:0.4, w:8, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
+    s.addText(rangeLabel, { x:0.6, y:0.88, w:8, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
 
-// Sums an editor's per-category tallies down into flat status totals (plus
-// the refs behind each), for the leaderboard-style "Quick Report" table
-// (mirrors the CRM extension's dashboard, which shows this ahead of the
-// full category breakdown).
-function assignEditorStatusTotals(editorData) {
-  var t = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: editorData.total };
-  var refs = { completed: [], pending: [], onHold: [], rejected: [] };
-  ASSIGN_CATEGORY_OPTIONS.forEach(function(cat) {
-    var d = editorData.categories[cat];
-    if (!d) return;
-    t.completed += d.completed; t.pending += d.pending; t.onHold += d.onHold; t.rejected += d.rejected;
-    if (d.refs) {
-      refs.completed = refs.completed.concat(d.refs.completed);
-      refs.pending = refs.pending.concat(d.refs.pending);
-      refs.onHold = refs.onHold.concat(d.refs.onHold);
-      refs.rejected = refs.rejected.concat(d.refs.rejected);
-    }
-  });
-  return { sums: t, refs: refs };
-}
-
-function assignQuickReportHtml(byEditor, editorNames) {
-  if (editorNames.length === 0) return '';
-  var grand = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
-  var grandRefs = { completed: [], pending: [], onHold: [], rejected: [] };
-  var rows = editorNames.map(function(name) {
-    var r = assignEditorStatusTotals(byEditor[name]);
-    var d = r.sums, refs = r.refs;
-    grand.completed += d.completed; grand.pending += d.pending; grand.onHold += d.onHold;
-    grand.rejected += d.rejected; grand.total += d.total;
-    grandRefs.completed = grandRefs.completed.concat(refs.completed);
-    grandRefs.pending = grandRefs.pending.concat(refs.pending);
-    grandRefs.onHold = grandRefs.onHold.concat(refs.onHold);
-    grandRefs.rejected = grandRefs.rejected.concat(refs.rejected);
-    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
-    return '<tr>'
-      + '<td class="editor-name">' + esc(name) + '</td>'
-      + assignNumCell(d.completed, refs.completed, name + ' \u00B7 Completed')
-      + assignNumCell(d.pending, refs.pending, name + ' \u00B7 Pending')
-      + assignNumCell(d.onHold, refs.onHold, name + ' \u00B7 On Hold')
-      + assignNumCell(d.rejected, refs.rejected, name + ' \u00B7 Rejected')
-      + assignNumCell(d.total, rowAllRefs, name + ' \u00B7 All statuses')
-      + '</tr>';
-  }).join('');
-
-  var grandAllRefs = grandRefs.completed.concat(grandRefs.pending, grandRefs.onHold, grandRefs.rejected);
-  return '<div class="dp-dash-quick-report">'
-    + '<div class="dp-bed-table-title">Quick Report</div>'
-    + '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
-    + '<th></th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
-    + '</tr></thead><tbody>'
-    + rows
-    + '<tr class="team-total"><td>Total</td>'
-    + assignNumCell(grand.completed, grandRefs.completed, 'Whole Team \u00B7 Completed')
-    + assignNumCell(grand.pending, grandRefs.pending, 'Whole Team \u00B7 Pending')
-    + assignNumCell(grand.onHold, grandRefs.onHold, 'Whole Team \u00B7 On Hold')
-    + assignNumCell(grand.rejected, grandRefs.rejected, 'Whole Team \u00B7 Rejected')
-    + assignNumCell(grand.total, grandAllRefs, 'Whole Team \u00B7 All statuses')
-    + '</tr></tbody></table></div>'
-    + '</div>';
-}
-
-function assignBedTableHtml(beds, rowLabel) {
-  var total = 0;
-  var cells = ASSIGN_BED_BUCKETS.map(function(b) {
-    var count = beds[b] || 0;
-    total += count;
-    return assignNumCell(count);
-  }).join('');
-  var headCells = ASSIGN_BED_BUCKETS.map(function(b) { return '<th>' + assignBedroomChipLabel(b) + '</th>'; }).join('');
-  return '<div class="report-table-wrap" style="margin-top:8px;"><table class="report-table"><thead><tr>'
-    + '<th></th>' + headCells + '<th>Total</th>'
-    + '</tr></thead><tbody><tr>'
-    + '<td class="editor-name">' + esc(rowLabel) + '</td>' + cells + assignNumCell(total)
-    + '</tr></tbody></table></div>';
-}
-
-function assignBedTablesHtml(categories) {
-  var html = '';
-  ASSIGN_BED_TRACKED_CATEGORIES.forEach(function(cat) {
-    var beds = categories[cat] && categories[cat].beds;
-    if (!beds || Object.keys(beds).length === 0) return;
-    html += '<div class="dp-bed-table-title">' + esc(cat) + ' \u2014 by bedrooms</div>' + assignBedTableHtml(beds, cat);
-  });
-  return html;
-}
-
-function assignLatestLineHtml(latest) {
-  if (!latest) return '';
-  var bedLabel = assignBedroomChipLabel(latest.bedBucket) + (latest.bedBucket === '?' ? '' : ' Bed');
-  var bits = [latest.ref || '\u2014'];
-  if (ASSIGN_BED_TRACKED_CATEGORIES.indexOf(latest.crmStatus) > -1) bits.push(bedLabel);
-  bits.push(latest.crmStatus, assignFmtRelative(latest.assignedAt));
-  return '<div class="dp-dash-latest">Latest: ' + esc(bits.join(' \u00B7 ')) + '</div>';
-}
-
-function assignCardHtml(title, data, isTeam) {
-  return '<div class="dp-dash-card' + (isTeam ? ' team' : '') + '">'
-    + '<div class="dp-dash-card-head">'
-    +   '<div class="dp-dash-card-title">' + esc(title) + '</div>'
-    +   '<div class="dp-dash-card-total">Total: ' + data.total + '</div>'
-    + '</div>'
-    + assignLatestLineHtml(data.latest)
-    + assignCategoryTableHtml(data.categories, title)
-    + assignBedTablesHtml(data.categories)
-    + '</div>';
-}
-
-// ── Scope labels & date display ───────────────────────────────────────────
-
-function assignTrackedCategoriesText() { return '(' + ASSIGN_CATEGORY_OPTIONS.join(', ') + ')'; }
-
-function assignScopeLabelText(s) {
-  if (s === 'today') return 'assigned today';
-  if (s === 'yesterday') return 'assigned yesterday';
-  if (s === 'thisweek') return 'assigned this week (Mon\u2013Sun)';
-  if (s === 'week') return 'assigned in the last 7 days';
-  if (s === 'month') return 'assigned this month (month-to-date)';
-  if (s === 'all') return 'assigned (all time)';
-  if (s && s.type === 'custom') return 'assigned from ' + s.start + ' to ' + s.end;
-  return 'assigned';
-}
-
-function assignEmptyLabelText(s) {
-  var suffix = 'in one of the tracked categories ' + assignTrackedCategoriesText() + '.';
-  if (s === 'today') return 'No listings assigned or put on hold today ' + suffix;
-  if (s === 'yesterday') return 'No listings assigned or put on hold yesterday ' + suffix;
-  if (s === 'thisweek') return 'No listings assigned or put on hold this week ' + suffix;
-  if (s === 'week') return 'No listings assigned or put on hold in the last 7 days ' + suffix;
-  if (s === 'month') return 'No listings assigned or put on hold this month (month-to-date) ' + suffix;
-  if (s === 'all') return 'No assigned or on-hold listings found ' + suffix;
-  if (s && s.type === 'custom') return 'No listings assigned or put on hold in that date range ' + suffix;
-  return 'No listings found ' + suffix;
-}
-
-function assignFmtFullDate(d) {
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-}
-function assignFmtTime(d) {
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-}
-function assignFmtShortDate(d, includeYear) {
-  var opts = { month: 'short', day: 'numeric' };
-  if (includeYear) opts.year = 'numeric';
-  return d.toLocaleDateString(undefined, opts);
-}
-function assignDateInfoText(s) {
-  if (s === 'all') return '';
-  var range = assignScopeToRange(s);
-  if (!range) return '';
-  var startDate = range[0];
-  var endDate = assignAddDays(range[1], -1); // range end is exclusive
-  if (s === 'today' || s === 'yesterday') return assignFmtFullDate(startDate);
-  var sameYear = startDate.getFullYear() === endDate.getFullYear();
-  return assignFmtShortDate(startDate, !sameYear) + ' \u2013 ' + assignFmtShortDate(endDate, true);
-}
-
-// ── Modal render / wiring ─────────────────────────────────────────────────
-
-// Fixed id for the DP Toolkit Chrome extension (pinned via a "key" in its
-// manifest.json specifically so this stays stable across every teammate's
-// install — see the manifest for the matching public key). Lets DP Studio,
-// a plain website, ask the *extension* to do the tab-switching/searching
-// that only an extension's chrome.tabs access can do.
-var DP_TOOLKIT_EXTENSION_ID = 'fnldgmmjlbpogkecndmccfbboakhgdai';
-
-function assignAutoSearchInCRM(ref, actionEl) {
-  if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) return;
-  try {
-    chrome.runtime.sendMessage(DP_TOOLKIT_EXTENSION_ID, { type: 'DP_AUTO_SEARCH', ref: ref }, function(resp) {
-      // chrome.runtime.lastError fires when the extension isn't installed,
-      // is disabled, or hasn't picked up the externally_connectable update
-      // yet — none of that should surprise the person, the ref is already
-      // copied to their clipboard either way, so just leave it there.
-      if (chrome.runtime.lastError) return;
-      if (resp && resp.ok && actionEl) {
-        actionEl.textContent = 'Opened in CRM \u2713';
-        setTimeout(function() { if (actionEl) actionEl.textContent = 'Copy'; }, 1800);
-      }
+    var cardW = 2.3, gap = 0.25, startX = 0.6, cardY = 1.35, cardH = 1.3;
+    kpis.forEach(function(k, i) {
+      var x = startX + i * (cardW + gap);
+      s.addShape('roundRect', { x:x, y:cardY, w:cardW, h:cardH, rectRadius:0.08, fill:{ color:PANEL }, line:{ color:BORDER, width:1 } });
+      s.addText(k.label.toUpperCase(), { x:x+0.15, y:cardY+0.15, w:cardW-0.3, h:0.45, fontFace:FONT, fontSize:9.5, color:BROWN, charSpacing:1 });
+      s.addText(k.val, { x:x+0.15, y:cardY+0.55, w:cardW-0.3, h:0.65, fontFace:FONT, fontSize:26, color:k.color, bold:true });
     });
-  } catch (e) { /* extension messaging unavailable — clipboard copy still worked */ }
-}
 
-// 3-state indicator, not a plain on/off: "enabled but outside the 9am–5:30pm
-// Dubai window" is a normal, expected state (Paused), distinct from fully
-// disabled (Off) — collapsing those into one state would make the toggle
-// look "off" every evening/morning even when nothing needs fixing, since
-// it'll resume automatically at 9am with no action needed.
-function renderAutoAssignToggleHtml() {
-  if (!AUTO_ASSIGN_STATUS.loaded) {
-    return '<div style="font-size:12px;color:#6b7280;">Auto-Assign \u2014 checking\u2026</div>';
-  }
-  var enabled = AUTO_ASSIGN_STATUS.enabled;
-  var active = AUTO_ASSIGN_STATUS.active;
-  var stateColor = active ? '#00d1b2' : (enabled ? '#e6941a' : '#6b7280');
-  var stateLabel = active ? 'Active' : (enabled ? 'Paused \u2014 outside 9am\u20135:30pm' : 'Off');
-  var trackBg = enabled ? '#00d1b2' : '#353b4d';
-  var knobLeft = enabled ? '18px' : '2px';
+    s.addText('Editor Breakdown', { x:0.6, y:2.95, w:8, h:0.4, fontFace:FONT, fontSize:16, color:INK, bold:true });
 
-  return ''
-    + '<div style="display:flex;align-items:center;gap:10px;">'
-    +   '<span style="font-size:12px;color:#9aa0ad;font-weight:600;">Auto-Assign</span>'
-    +   '<button type="button" id="autoAssignSwitch" title="' + esc(stateLabel) + ' \u2014 click to toggle" '
-    +     'style="position:relative;width:36px;height:20px;border-radius:10px;border:none;cursor:pointer;'
-    +     'background:' + trackBg + ';flex-shrink:0;transition:background .15s;padding:0;">'
-    +     '<span style="position:absolute;top:2px;left:' + knobLeft + ';width:16px;height:16px;border-radius:50%;'
-    +     'background:#fff;transition:left .15s;"></span>'
-    +   '</button>'
-    +   '<span style="display:flex;align-items:center;gap:5px;font-size:11px;color:' + stateColor + ';font-weight:700;white-space:nowrap;">'
-    +     '<span style="width:7px;height:7px;border-radius:50%;background:' + stateColor + ';display:inline-block;"></span>'
-    +     esc(stateLabel)
-    +   '</span>'
-    + '</div>';
-}
+    var header = ['Editor','Photo','Agent','Offplan','Completed','In progress','On-hold','Rejected','Total'].map(function(t, i) {
+      return { text:t, options:{ bold:true, fontSize:11.5, align: i===0 ? 'left' : 'center',
+        color: i===4 ? INK : BROWN, fill:{ color: i===4 ? STRONG_HL : (i>=1 && i<=3 ? LIGHT_HL : PANEL2) } } };
+    });
 
-function renderAssignDashboard() {
-  var inner = document.getElementById('assignDashView');
-  if (!inner) return;
-  ASSIGN_REFS_REGISTRY = {};
-  ASSIGN_REFS_COUNTER = 0;
-  var scope = ASSIGN_SCOPE;
-  var isCustom = !!(scope && scope.type === 'custom');
+    var rows = editorBreakdown.map(function(e) {
+      return [
+        { text:e.editor, options:{ color:INK, fontSize:13, bold:true, fill:{ color:PANEL } } },
+        { text:String(e.photo),   options:{ color:INK, fontSize:13, align:'center', fill:{ color:LIGHT_HL } } },
+        { text:String(e.agent),   options:{ color:INK, fontSize:13, align:'center', fill:{ color:LIGHT_HL } } },
+        { text:String(e.offplan), options:{ color:INK, fontSize:13, align:'center', fill:{ color:LIGHT_HL } } },
+        { text:String(e.completed), options:{ color:INK, fontSize:13, align:'center', bold:true, fill:{ color:STRONG_HL } } },
+        { text:e.inProgress ? String(e.inProgress) : '', options:{ color:INK, fontSize:13, align:'center', fill:{ color:PANEL } } },
+        { text:e.onHold ? String(e.onHold) : '',         options:{ color:INK, fontSize:13, align:'center', fill:{ color:PANEL } } },
+        { text:e.rejected ? String(e.rejected) : '',     options:{ color:e.rejected>0?RED:INK, fontSize:13, align:'center', fill:{ color:PANEL } } },
+        { text:String(e.total), options:{ color:INK, fontSize:13, align:'center', bold:true, fill:{ color:PANEL } } },
+      ];
+    });
 
-  function pillClass(active) { return 'fp-t-pill' + (active ? ' active' : ''); }
+    var teamRow = [
+      { text:'Team Total', options:{ color:JET, fontSize:13, bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.photo),   options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.agent),   options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.offplan), options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.completed), options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:team.inProgress ? String(team.inProgress) : '', options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:team.onHold ? String(team.onHold) : '',         options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.rejected), options:{ color:RED, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+      { text:String(team.total), options:{ color:JET, fontSize:13, align:'center', bold:true, fill:{ color:PANEL2 } } },
+    ];
 
-  var scopeRowHtml =
-    '<div class="fp-time-pills" id="assignScopePills">'
-    + '<button type="button" class="' + pillClass(scope === 'today') + '" data-scope="today">Today</button>'
-    + '<button type="button" class="' + pillClass(scope === 'yesterday') + '" data-scope="yesterday">Yesterday</button>'
-    + '<button type="button" class="' + pillClass(scope === 'thisweek') + '" data-scope="thisweek">This Week</button>'
-    + '<button type="button" class="' + pillClass(scope === 'week') + '" data-scope="week">Last 7 Days</button>'
-    + '<button type="button" class="' + pillClass(scope === 'month') + '" data-scope="month">Month</button>'
-    + '<button type="button" class="' + pillClass(scope === 'all') + '" data-scope="all">All time</button>'
-    + '<button type="button" class="' + pillClass(isCustom) + '" data-scope="custom">Custom Range</button>'
-    + '</div>';
+    s.addTable([header].concat(rows, [teamRow]), {
+      x:0.6, y:3.4, w:12.1, h:3.15,
+      colW:[2.6,1.15,1.15,1.15,1.3,1.2,1.2,1.15,1.2],
+      border:{ type:'solid', color:BORDER, pt:0.75 },
+      fill:{ color:PANEL }, autoPage:false, rowH:0.525, valign:'middle',
+    });
 
-  var customRangeHtml =
-    '<div class="fp-date-row" id="assignCustomRow" style="display:' + (isCustom ? 'flex' : 'none') + ';margin-top:10px;">'
-    + '<input type="date" id="assignDateFrom" class="fp-date-in" title="From" value="' + esc(ASSIGN_CUSTOM_DRAFT.start) + '">'
-    + '<span class="fp-date-sep">\u2192</span>'
-    + '<input type="date" id="assignDateTo" class="fp-date-in" title="To" value="' + esc(ASSIGN_CUSTOM_DRAFT.end) + '">'
-    + '<button class="fp-apply-date" id="assignApplyRangeBtn" type="button">Apply</button>'
-    + '</div>';
+    footer(s, 'Page 2');
+  })();
 
-  var dateText = assignDateInfoText(scope);
-  var dateInfoHtml = dateText
-    ? '<div class="dp-dash-date-info">' + esc(dateText)
-      + ' \u00B7 <span class="dp-dash-live-time" id="assignLiveTime">' + esc(assignFmtTime(new Date())) + '</span></div>'
-    : '';
+  // Slide(s) 3+ — Rejected listings detail (auto-paginate, 10 rows per slide)
+  var PAGE_SIZE = 10;
+  var pageCount = Math.max(1, Math.ceil(rejections.length / PAGE_SIZE));
+  for (var p = 0; p < pageCount; p++) {
+    (function(pageRows, pageNum) {
+      var s = bgSlide();
+      s.addText('Rejected Listings', { x:0.6, y:0.45, w:8, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
+      var sub = rangeLabel + '  ·  ' + rejections.length + ' item(s)' + (pageCount > 1 ? '  ·  Page ' + (pageNum+1) + ' of ' + pageCount : '');
+      s.addText(sub, { x:0.6, y:0.95, w:11, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
 
-  var autoAssignHtml = renderAutoAssignToggleHtml();
-
-  var headerHtml =
-    '<div class="report-header">'
-    +   '<div>'
-    +     '<div class="report-title">\uD83D\uDCCA Assignment Dashboard</div>'
-    +     '<div class="report-subtitle">From the Assignments tab \u2014 same data as the CRM extension</div>'
-    +   '</div>'
-    +   autoAssignHtml
-    + '</div>'
-    + scopeRowHtml + customRangeHtml + dateInfoHtml;
-
-  if (isCustom && !assignScopeToRange(scope)) {
-    inner.innerHTML = headerHtml + '<div class="dp-dash-summary">Pick a start and end date, then Apply.</div>';
-    assignWireDashboardControls();
-    return;
-  }
-
-  if (!ASSIGN_DATA.loaded) {
-    inner.innerHTML = headerHtml + '<div class="dp-dash-empty">Loading assignment data\u2026</div>';
-    assignWireDashboardControls();
-    return;
-  }
-
-  var stats = computeAssignDashboardStats(scope);
-  var byEditor = stats.byEditor, team = stats.team, unassigned = stats.unassigned, uncategorized = stats.uncategorized;
-
-  var summary = team.total + ' assigned listing' + (team.total === 1 ? '' : 's') + ' ' + assignScopeLabelText(scope)
-    + ' across the ' + ASSIGN_CATEGORY_OPTIONS.length + ' tracked categories ' + assignTrackedCategoriesText();
-  if (unassigned.total > 0) {
-    summary += ', plus ' + unassigned.total + ' unassigned listing' + (unassigned.total === 1 ? '' : 's') + ' on hold';
-  }
-  summary += ' \u2014 data pulled from the sheet, not limited to what\'s loaded on this page.';
-  if (uncategorized > 0) {
-    summary += ' ' + uncategorized + ' listing' + (uncategorized === 1 ? '' : 's') + ' excluded \u2014 not one of the '
-      + ASSIGN_CATEGORY_OPTIONS.length + ' tracked categories, or the category was never captured.';
-  }
-
-  var editorNames = Object.keys(byEditor).sort(function(a, b) { return byEditor[b].total - byEditor[a].total; });
-  var quickReportHtml = assignQuickReportHtml(byEditor, editorNames);
-
-  var bodyHtml;
-  if (editorNames.length === 0 && unassigned.total === 0) {
-    bodyHtml = '<div class="dp-dash-empty">' + esc(assignEmptyLabelText(scope)) + '</div>';
-  } else {
-    bodyHtml = '<div class="dp-dash-body">';
-    if (team.total > 0) bodyHtml += assignCardHtml('Whole Team', team, true);
-    if (unassigned.total > 0) bodyHtml += assignCardHtml('Unassigned (On Hold)', unassigned, false);
-    editorNames.forEach(function(name) { bodyHtml += assignCardHtml(name, byEditor[name], false); });
-    bodyHtml += '</div>';
-  }
-
-  inner.innerHTML = headerHtml + quickReportHtml + '<div class="dp-dash-summary">' + esc(summary) + '</div>' + bodyHtml;
-  assignWireDashboardControls();
-}
-
-function assignWireDashboardControls() {
-  var autoAssignSwitch = document.getElementById('autoAssignSwitch');
-  if (autoAssignSwitch) {
-    autoAssignSwitch.addEventListener('click', function() {
-      if (!AUTO_ASSIGN_STATUS.loaded || autoAssignSwitch.disabled) return;
-      autoAssignSwitch.disabled = true;
-      setAutoAssignEnabled(!AUTO_ASSIGN_STATUS.enabled, function(err) {
-        if (err) console.error('Auto-Assign toggle failed:', err);
-        // No need to manually re-enable here — setAutoAssignEnabled always
-        // calls renderAssignDashboard on both success and failure, which
-        // rebuilds this whole button fresh (and thus un-disabled) either way.
+      var header = ['DP-REQ Number','Listing Reference','Editor','Rejection Reason'].map(function(t) {
+        return { text:t, options:{ bold:true, color:BROWN, fill:{ color:PANEL2 }, fontSize:12 } };
       });
-    });
+
+      var rows = pageRows.length ? pageRows.map(function(r) {
+        return [
+          { text:r.req,    options:{ color:RED, fontSize:12, bold:true, fontFace:'Courier New', fill:{ color:PANEL } } },
+          { text:r.ref,    options:{ color:INK, fontSize:12, fill:{ color:PANEL } } },
+          { text:r.editor, options:{ color:INK, fontSize:12, fill:{ color:PANEL } } },
+          { text:r.reason, options:{ color:BROWN, fontSize:11.5, fill:{ color:PANEL } } },
+        ];
+      }) : [[
+        { text:'No rejected listings in this range.', options:{ color:BROWN, fontSize:12, fill:{ color:PANEL }, italic:true } },
+        { text:'', options:{ fill:{ color:PANEL } } },
+        { text:'', options:{ fill:{ color:PANEL } } },
+        { text:'', options:{ fill:{ color:PANEL } } },
+      ]];
+
+      s.addTable([header].concat(rows), {
+        x:0.6, y:1.6, w:12.1, h:Math.min(5.3, 0.7 * (rows.length + 1)),
+        colW:[2.3,3.1,1.5,5.2],
+        border:{ type:'solid', color:BORDER, pt:0.75 },
+        fill:{ color:PANEL }, autoPage:false, rowH:0.7, valign:'middle',
+      });
+
+      footer(s, 'Page ' + (3 + pageNum));
+    })(rejections.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE), p);
   }
 
-  document.querySelectorAll('#assignScopePills [data-scope]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var next = btn.dataset.scope;
-      if (next === 'custom') {
-        ASSIGN_SCOPE = { type: 'custom', start: ASSIGN_CUSTOM_DRAFT.start, end: ASSIGN_CUSTOM_DRAFT.end };
-      } else {
-        ASSIGN_SCOPE = next;
-      }
-      renderAssignDashboard();
-    });
-  });
-  var applyBtn = document.getElementById('assignApplyRangeBtn');
-  if (applyBtn) {
-    applyBtn.addEventListener('click', function() {
-      ASSIGN_CUSTOM_DRAFT = {
-        start: document.getElementById('assignDateFrom').value,
-        end: document.getElementById('assignDateTo').value,
-      };
-      ASSIGN_SCOPE = { type: 'custom', start: ASSIGN_CUSTOM_DRAFT.start, end: ASSIGN_CUSTOM_DRAFT.end };
-      renderAssignDashboard();
-    });
-  }
-}
-
-// ── Refs modal — clicking any non-zero count above opens this, listing the
-// individual DP-REQ refs that make up that number. Built dynamically (like
-// the extension's showRefsModal) rather than pre-declared in index.html,
-// and stacks on top of the Assignment Dashboard modal.
-function assignCloseRefsModal() {
-  var el = document.getElementById('assignRefsBg');
-  if (el) el.remove();
-}
-
-function assignShowRefsModal(title, refs) {
-  assignCloseRefsModal();
-  var uniqueRefs = Array.prototype.filter.call(refs || [], function(r, i, arr) { return r && arr.indexOf(r) === i; }).sort();
-
-  var itemsHtml = uniqueRefs.length === 0
-    ? '<div class="dp-dash-empty">No reference numbers found.</div>'
-    : '<div class="dp-refs-list">' + uniqueRefs.map(function(ref) {
-        return '<button type="button" class="dp-refs-list-item" data-ref="' + esc(ref) + '">'
-          + '<span class="dp-refs-list-ref">' + esc(ref) + '</span>'
-          + '<span class="dp-refs-list-action">Copy</span>'
-          + '</button>';
-      }).join('') + '</div>';
-
-  var bg = document.createElement('div');
-  bg.id = 'assignRefsBg';
-  bg.className = 'modal-bg';
-  bg.style.zIndex = '260'; // stack above the Assignment Dashboard modal
-  bg.addEventListener('click', function(e) { if (e.target === bg) assignCloseRefsModal(); });
-  bg.innerHTML =
-    '<div class="modal dp-refs-modal" style="max-width:420px;">'
-    +   '<div class="modal-head">'
-    +     '<div class="modal-req" style="font-size:15px;">' + esc(title) + ' (' + uniqueRefs.length + ')</div>'
-    +     '<button class="modal-close" id="assignRefsCloseBtn">\u2715</button>'
-    +   '</div>'
-    +   itemsHtml
-    +   '<div class="edit-actions" style="margin-top:14px;">'
-    +     '<button class="edit-save-btn" id="assignRefsCopyAllBtn"' + (uniqueRefs.length === 0 ? ' disabled' : '') + '>Copy List</button>'
-    +     '<button class="edit-cancel-btn" id="assignRefsCloseBtn2">Close</button>'
-    +   '</div>'
-    + '</div>';
-  document.body.appendChild(bg);
-
-  var closeBtn1 = document.getElementById('assignRefsCloseBtn');
-  var closeBtn2 = document.getElementById('assignRefsCloseBtn2');
-  if (closeBtn1) closeBtn1.addEventListener('click', assignCloseRefsModal);
-  if (closeBtn2) closeBtn2.addEventListener('click', assignCloseRefsModal);
-
-  var copyAllBtn = document.getElementById('assignRefsCopyAllBtn');
-  if (copyAllBtn && uniqueRefs.length > 0) {
-    copyAllBtn.addEventListener('click', function() {
-      navigator.clipboard.writeText(uniqueRefs.join('\n')).then(function() {
-        copyAllBtn.textContent = 'Copied!';
-        setTimeout(function() { copyAllBtn.textContent = 'Copy List'; }, 1500);
-      }).catch(function() {});
-    });
-  }
-
-  bg.querySelectorAll('.dp-refs-list-item').forEach(function(item) {
-    item.title = 'Copy, and auto-search in the CRM if the DP Toolkit extension is installed';
-    item.addEventListener('click', function() {
-      var ref = item.getAttribute('data-ref');
-      var actionEl = item.querySelector('.dp-refs-list-action');
-      navigator.clipboard.writeText(ref).then(function() {
-        if (actionEl) {
-          actionEl.textContent = 'Copied \u2713';
-          setTimeout(function() { if (actionEl) actionEl.textContent = 'Copy'; }, 1200);
-        }
-        assignAutoSearchInCRM(ref, actionEl);
-      }).catch(function() {});
-    });
-  });
-}
-
-// Delegated (added once, at load) — the stat buttons are re-created on
-// every renderAssignDashboard() call, so per-element listeners would leak
-// or go stale; delegation on document sidesteps that entirely.
-document.addEventListener('click', function(e) {
-  var btn = e.target.closest && e.target.closest('.dp-dash-stat-btn');
-  if (!btn) return;
-  var id = btn.getAttribute('data-refs-id');
-  var entry = id && ASSIGN_REFS_REGISTRY[id];
-  if (entry) assignShowRefsModal(entry.title, entry.refs);
-});
-
-function fetchAssignData(cb, silent) {
-  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      var next = (data && Array.isArray(data.assignments)) ? data.assignments : [];
-      // Silent (background poll) mode: skip the re-render entirely if the
-      // ref-list modal is open, so a mid-read refresh can't yank the list
-      // out from under someone, and skip it if nothing actually changed so
-      // there's no needless flicker/scroll-jump on every tick.
-      if (silent) {
-        if (document.getElementById('assignRefsBg')) { ASSIGN_DATA.assignments = next; ASSIGN_DATA.loaded = true; return; }
-        if (next.length === ASSIGN_DATA.assignments.length && JSON.stringify(next) === JSON.stringify(ASSIGN_DATA.assignments)) return;
-      }
-      ASSIGN_DATA.assignments = next;
-      ASSIGN_DATA.loaded = true;
-      if (cb) cb(null);
-    })
-    .catch(function(err) {
-      console.error('Assignment Dashboard fetch failed', err);
-      if (cb) cb(err);
-    });
-}
-
-// Read-only — current enabled/window/active state, for the header toggle's
-// 3-state indicator. Cheap, no lock contention server-side (goes through
-// doGet, not doPost), safe to poll on the same cadence as assignment data.
-function fetchAutoAssignStatus(cb) {
-  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN + '&action=autoAssignStatus', { cache: 'no-store' })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data || data.error) { if (cb) cb(data && data.error); return; }
-      AUTO_ASSIGN_STATUS.enabled = !!data.enabled;
-      AUTO_ASSIGN_STATUS.withinWindow = !!data.withinWindow;
-      AUTO_ASSIGN_STATUS.active = !!data.active;
-      AUTO_ASSIGN_STATUS.roster = Array.isArray(data.roster) ? data.roster : [];
-      AUTO_ASSIGN_STATUS.loaded = true;
-      if (cb) cb(null);
-    })
-    .catch(function(err) {
-      console.error('Auto-assign status fetch failed', err);
-      if (cb) cb(err);
-    });
-}
-
-// Writes the toggle. Applies for everyone immediately (server-side flag),
-// not just this browser tab. Optimistically flips the local state right
-// away so the toggle feels instant, then reconciles with the server's
-// actual response — reverting the optimistic flip on failure rather than
-// leaving the UI showing something that didn't actually take effect.
-function setAutoAssignEnabled(nextEnabled, cb) {
-  var prevEnabled = AUTO_ASSIGN_STATUS.enabled;
-  AUTO_ASSIGN_STATUS.enabled = nextEnabled;
-  AUTO_ASSIGN_STATUS.active = nextEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-  renderAssignDashboard();
-
-  fetch(S.assignUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ token: ASSIGN_TOKEN, action: 'setAutoAssignEnabled', enabled: nextEnabled }),
-  })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data || data.error || data.enabled !== nextEnabled) {
-        AUTO_ASSIGN_STATUS.enabled = prevEnabled;
-        AUTO_ASSIGN_STATUS.active = prevEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-        renderAssignDashboard();
-        if (cb) cb((data && data.error) || 'Did not save — please try again');
-        return;
-      }
-      fetchAutoAssignStatus(function() { renderAssignDashboard(); });
-      if (cb) cb(null);
-    })
-    .catch(function(err) {
-      AUTO_ASSIGN_STATUS.enabled = prevEnabled;
-      AUTO_ASSIGN_STATUS.active = prevEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-      renderAssignDashboard();
-      if (cb) cb(String(err));
-    });
-}
-
-function assignStartClock() {
-  assignStopClock();
-  ASSIGN_CLOCK_INTERVAL = setInterval(function() {
-    var el = document.getElementById('assignLiveTime');
-    if (el) el.textContent = assignFmtTime(new Date());
-  }, 1000);
-}
-
-function assignStopClock() {
-  if (ASSIGN_CLOCK_INTERVAL) { clearInterval(ASSIGN_CLOCK_INTERVAL); ASSIGN_CLOCK_INTERVAL = null; }
-}
-
-// Background refresh while the dashboard tab is open — the extension's own
-// dashboard polls every 15s (REFRESH_INTERVAL_MS in assigner-content.js);
-// matched here so DP Studio doesn't lag behind it.
-var ASSIGN_POLL_MS = 8000;
-
-function assignStartPoll() {
-  assignStopPoll();
-  ASSIGN_POLL_INTERVAL = setInterval(function() {
-    if (document.visibilityState === 'visible' && ASSIGN_DASH_VIEW_ACTIVE) {
-      fetchAssignData(function() { renderAssignDashboard(); }, true);
-      fetchAutoAssignStatus(function() { renderAssignDashboard(); });
-    }
-  }, ASSIGN_POLL_MS);
-}
-
-function assignStopPoll() {
-  if (ASSIGN_POLL_INTERVAL) { clearInterval(ASSIGN_POLL_INTERVAL); ASSIGN_POLL_INTERVAL = null; }
-}
-
-function openAssignDashboardView() {
-  renderAssignDashboard(); // show something immediately (loading state)
-  fetchAssignData(function() { renderAssignDashboard(); });
-  fetchAutoAssignStatus(function() { renderAssignDashboard(); });
-  assignStartClock();
-  assignStartPoll();
+  var rangeSlug = (S.fromDate && S.toDate) ? (S.fromDate + '_to_' + S.toDate) : (S.range || 'all');
+  var dateSlug = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  pres.writeFile({ fileName: 'DP-Report-' + rangeSlug + '-' + dateSlug + '.pptx' });
 }
