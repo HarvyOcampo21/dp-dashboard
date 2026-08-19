@@ -3039,8 +3039,11 @@ function openAssignDashboardView() {
 }
 
 // ─── PPTX Export ────────────────────────────────────────────────────────────
-// Builds an editable PowerPoint (title / summary+breakdown / rejected detail)
-// scoped to whatever date range + editor tab is currently active on screen.
+// Builds an editable PowerPoint (title / summary+breakdown per week (if the
+// active range splits into weeks) / combined summary+breakdown / week-over-
+// week analysis (if split) / rejected detail) scoped to whatever date range
+// + editor tab is currently active on screen. Mirrors renderReport() exactly
+// so the numbers in the deck always match what's on screen.
 // Palette: Coolors "0a0908-22333b-f2f4f3-a9927d-5e503f"
 function generateReportPPTX() {
   if (typeof PptxGenJS === 'undefined') {
@@ -3058,37 +3061,32 @@ function generateReportPPTX() {
   var JET       = '22333B'; // Jet Black — headers / dark accent
   var TAUPE     = 'A9927D'; // Dusty Taupe — accent
   var BROWN     = '5E503F'; // Stone Brown — muted text
-  var RED       = 'B3452F'; // rejected
+  var RED       = 'B3452F'; // rejected / downward trend
+  var GREEN     = '3F7D57'; // upward trend
   var FONT      = 'Calibri';
   var W = 13.33, H = 7.5;
 
-  // ── Gather data for the current filter (same source + same computation as
-  // the on-screen report — see computeEditorBreakdown()) ──────────────────
-  var bd = computeEditorBreakdown();
-  var editorBreakdown = bd.editorBreakdown;
-  var team = bd.team;
-  var rejectedRows = bd.rejectedRows;
+  // ── Gather data for one range (whatever S.fromDate/S.toDate/S.range are
+  // currently set to) — same source + same computation as the on-screen
+  // report (computeEditorBreakdown() / computeReportStats()), so numbers in
+  // the exported deck can never drift from what's on screen. Called directly
+  // for the combined/full-range data, and via withDateRange() for each
+  // week's data so it can reuse the exact same logic per week. ────────────
+  function gatherSlideData() {
+    var bd    = computeEditorBreakdown();
+    var stats = computeReportStats();
+    var compRate = bd.team.total > 0 ? Math.round(bd.team.completed / bd.team.total * 100) : 0;
+    return { editorBreakdown: bd.editorBreakdown, team: bd.team, rejectedRows: bd.rejectedRows, compRate: compRate, stats: stats };
+  }
 
-  // Completion Rate = Completed ÷ Total — identical formula to the on-screen report
-  var compRate = team.total > 0 ? Math.round(team.completed / team.total * 100) : 0;
+  var combined = gatherSlideData();
 
-  var kpis = [
-    { label: 'Total Processed', val: String(team.total), color: INK },
-    { label: 'Completed',       val: String(team.completed), color: JET },
-    { label: 'Assigned',        val: String(team.assigned), color: TAUPE },
-    { label: 'In progress',     val: String(team.inProgress), color: TAUPE },
-    { label: 'On-hold',         val: String(team.onHold), color: TAUPE },
-    { label: 'Rejected',        val: String(team.rejected), color: RED },
-    { label: 'Completion Rate', val: compRate + '%', color: BROWN },
-  ];
-
-  var rejections = rejectedRows.map(function(r) {
-    return {
-      req:    r['DP-REQ Number']     || '—',
-      ref:    r['Listing Reference'] || '—',
-      editor: r._editor              || '—',
-      reason: r['Rejection Reason']  || 'No reason recorded',
-    };
+  // Same week-splitting the on-screen report uses — only kicks in for a
+  // sufficiently long selected range (10+ days). See getWeekSegments().
+  var segments = getWeekSegments();
+  var weeks = segments && segments.map(function(seg) {
+    var data = withDateRange(seg.from, seg.to, gatherSlideData);
+    return { label: seg.label, from: seg.from, to: seg.to, data: data };
   });
 
   var rangeLabel = getRangeLabel();
@@ -3105,9 +3103,14 @@ function generateReportPPTX() {
     s.background = { color: BG };
     return s;
   }
-  function footer(s, pageLabel) {
+
+  // Slide 1 (title) is unlabeled, so page numbering starts at 2 and just
+  // auto-increments regardless of how many weekly sections get inserted.
+  var pageCounter = 2;
+  function footer(s) {
     s.addText('DP Photo Editors Studio', { x:0.5, y:H-0.45, w:6, h:0.3, fontFace:FONT, fontSize:9, color:BROWN });
-    s.addText(pageLabel, { x:W-6.5, y:H-0.45, w:6, h:0.3, align:'right', fontFace:FONT, fontSize:9, color:BROWN });
+    s.addText('Page ' + pageCounter, { x:W-6.5, y:H-0.45, w:6, h:0.3, align:'right', fontFace:FONT, fontSize:9, color:BROWN });
+    pageCounter++;
   }
 
   // Slide 1 — Title
@@ -3117,33 +3120,61 @@ function generateReportPPTX() {
     s.addText('DP PHOTO EDITORS STUDIO', { x:0.9, y:2.55, w:11.5, h:0.4, fontFace:FONT, fontSize:14, color:BROWN, charSpacing:3, bold:true });
     s.addText('Daily Report', { x:0.85, y:2.9, w:11.5, h:1.1, fontFace:FONT, fontSize:44, color:INK, bold:true });
     s.addText(rangeLabel, { x:0.9, y:3.95, w:11.5, h:0.5, fontFace:FONT, fontSize:20, color:JET });
-    s.addText(generatedAt, { x:0.9, y:4.45, w:11.5, h:0.4, fontFace:FONT, fontSize:12, color:BROWN });
+    if (weeks) {
+      s.addText('Split into ' + weeks.length + ' weekly sections + combined summary + week-over-week analysis',
+        { x:0.9, y:4.4, w:11.5, h:0.35, fontFace:FONT, fontSize:12.5, color:TAUPE });
+      s.addText(generatedAt, { x:0.9, y:4.72, w:11.5, h:0.4, fontFace:FONT, fontSize:12, color:BROWN });
+    } else {
+      s.addText(generatedAt, { x:0.9, y:4.45, w:11.5, h:0.4, fontFace:FONT, fontSize:12, color:BROWN });
+    }
   })();
 
-  // Slide 2 — Summary + Editor Breakdown
-  (function() {
+  // Summary + Editor Breakdown slide — used once for a single-range report,
+  // or once per week plus once for the combined range when the report is
+  // split into weeks. Layout numbers match the original single-slide design,
+  // just with a "Requests Summary" line inserted under the subtitle so each
+  // slide also carries the same actual-volume numbers the on-screen
+  // Requests Summary cards show for that same range.
+  function addSummarySlide(title, subtitle, data) {
     var s = bgSlide();
-    s.addText('Summary', { x:0.6, y:0.4, w:8, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
-    s.addText(rangeLabel, { x:0.6, y:0.88, w:8, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
+    s.addText(title, { x:0.6, y:0.4, w:9.5, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
+    s.addText(subtitle, { x:0.6, y:0.88, w:9.5, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
 
-    // 6 KPI cards across the same width the 5-card version used
-    var cardGap = 0.2, startX = 0.6, cardY = 1.35, cardH = 1.3;
+    var st = data.stats;
+    var reqLine = '📷 Photo ' + st.actualPhoto + '   🏠 Agent ' + st.actualAgent
+      + '   📄 Offplan ' + st.actualBroch + '   ❌ Rejected ' + st.actualRej
+      + '   ·   Total Processed ' + st.actualTotal;
+    s.addText(reqLine, { x:0.6, y:1.22, w:12.1, h:0.3, fontFace:FONT, fontSize:10.5, color:BROWN });
+
+    var team = data.team;
+    var kpis = [
+      { label: 'Total Processed', val: String(team.total), color: INK },
+      { label: 'Completed',       val: String(team.completed), color: JET },
+      { label: 'Assigned',        val: String(team.assigned), color: TAUPE },
+      { label: 'In progress',     val: String(team.inProgress), color: TAUPE },
+      { label: 'On-hold',         val: String(team.onHold), color: TAUPE },
+      { label: 'Rejected',        val: String(team.rejected), color: RED },
+      { label: 'Completion Rate', val: data.compRate + '%', color: BROWN },
+    ];
+
+    var cardGap = 0.2, startX = 0.6, cardY = 1.62, cardH = 1.2;
     var cardW = (12.1 - (kpis.length - 1) * cardGap) / kpis.length;
     kpis.forEach(function(k, i) {
       var x = startX + i * (cardW + cardGap);
       s.addShape('roundRect', { x:x, y:cardY, w:cardW, h:cardH, rectRadius:0.08, fill:{ color:PANEL }, line:{ color:BORDER, width:1 } });
-      s.addText(k.label.toUpperCase(), { x:x+0.12, y:cardY+0.15, w:cardW-0.24, h:0.5, fontFace:FONT, fontSize:8.5, color:BROWN, charSpacing:0.5 });
-      s.addText(k.val, { x:x+0.12, y:cardY+0.6, w:cardW-0.24, h:0.6, fontFace:FONT, fontSize:22, color:k.color, bold:true });
+      s.addText(k.label.toUpperCase(), { x:x+0.12, y:cardY+0.13, w:cardW-0.24, h:0.45, fontFace:FONT, fontSize:8.5, color:BROWN, charSpacing:0.5 });
+      s.addText(k.val, { x:x+0.12, y:cardY+0.55, w:cardW-0.24, h:0.55, fontFace:FONT, fontSize:20, color:k.color, bold:true });
     });
 
-    s.addText('Editor Breakdown', { x:0.6, y:2.95, w:8, h:0.4, fontFace:FONT, fontSize:16, color:INK, bold:true });
+    var breakdownY = cardY + cardH + 0.2;
+    s.addText('Editor Breakdown', { x:0.6, y:breakdownY, w:8, h:0.4, fontFace:FONT, fontSize:16, color:INK, bold:true });
 
     var header = ['Editor','Photo','Agent','Offplan','Completed','Assigned','In progress','On-hold','Rejected','Total'].map(function(t, i) {
       return { text:t, options:{ bold:true, fontSize:11, align: i===0 ? 'left' : 'center',
         color: i===4 ? INK : BROWN, fill:{ color: i===4 ? STRONG_HL : (i>=1 && i<=3 ? LIGHT_HL : PANEL2) } } };
     });
 
-    var rows = editorBreakdown.map(function(e) {
+    var rows = data.editorBreakdown.map(function(e) {
       return [
         { text:e.editor, options:{ color:INK, fontSize:12.5, bold:true, fill:{ color:PANEL } } },
         { text:String(e.photo),   options:{ color:INK, fontSize:12.5, align:'center', fill:{ color:LIGHT_HL } } },
@@ -3171,19 +3202,99 @@ function generateReportPPTX() {
       { text:String(team.total), options:{ color:JET, fontSize:12.5, align:'center', bold:true, fill:{ color:PANEL2 } } },
     ];
 
+    var tableY = breakdownY + 0.45;
     s.addTable([header].concat(rows, [teamRow]), {
-      x:0.6, y:3.4, w:12.1, h:3.15,
+      x:0.6, y:tableY, w:12.1, h:H - 0.65 - tableY,
       colW:[2.45,1.05,1.05,1.05,1.15,1.05,1.05,1.05,1.05,1.15],
       border:{ type:'solid', color:BORDER, pt:0.75 },
       fill:{ color:PANEL }, autoPage:false, rowH:0.525, valign:'middle',
     });
 
-    footer(s, 'Page 2');
-  })();
+    footer(s);
+  }
 
-  // Slide(s) 3+ — Rejected listings detail.
-  // Rows are packed by ESTIMATED WRAPPED HEIGHT (not a fixed row count) so a long
-  // Rejection Reason can never push the table past the footer.
+  // Week-over-week analysis slide — one row per metric, one column per
+  // week, plus a trend column comparing the first week to the last. Mirrors
+  // buildWeekAnalysisHTML() on screen so the numbers always match.
+  function addWeekAnalysisSlide(weeks) {
+    var s = bgSlide();
+    s.addText('Week-over-Week Analysis', { x:0.6, y:0.45, w:10, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
+    s.addText('How the combined totals moved between weeks', { x:0.6, y:0.95, w:10, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
+
+    var metrics = [
+      { key:'actualPhoto', label:'📷 Photographer Photos' },
+      { key:'actualAgent', label:'🏠 Agent Property Photos' },
+      { key:'actualBroch', label:'📄 Offplan / Brochure' },
+      { key:'actualRej',   label:'❌ Rejected' },
+      { key:'actualTotal', label:'Total Processed' },
+      { key:'compRate',    label:'Completion Rate', suffix:'%' },
+    ];
+
+    function trendText(first, last, suffix) {
+      var diff = last - first;
+      if (diff === 0) return '— even';
+      var pct = first !== 0 ? Math.round((diff / first) * 100) : null;
+      var arrow = diff > 0 ? '▲' : '▼';
+      var pctTxt = pct === null ? '' : ' (' + (diff > 0 ? '+' : '') + pct + '%)';
+      return arrow + ' ' + (diff > 0 ? '+' : '') + diff + (suffix||'') + pctTxt;
+    }
+    function trendColor(first, last) {
+      var diff = last - first;
+      return diff === 0 ? BROWN : (diff > 0 ? GREEN : RED);
+    }
+
+    var metricColW = 2.9, trendColW = 2.3;
+    var weekColW = (12.1 - metricColW - trendColW) / weeks.length;
+
+    var header = [{ text:'Metric', options:{ bold:true, fontSize:11, align:'left', color:BROWN, fill:{ color:PANEL2 } } }]
+      .concat(weeks.map(function(w) {
+        return { text: w.label + '\n' + w.from + ' → ' + w.to, options:{ bold:true, fontSize:9.5, align:'center', color:BROWN, fill:{ color:PANEL2 } } };
+      }))
+      .concat([{ text:'Trend (Wk 1 → Wk ' + weeks.length + ')', options:{ bold:true, fontSize:10, align:'center', color:BROWN, fill:{ color:PANEL2 } } }]);
+
+    var rows = metrics.map(function(m) {
+      var cells = [{ text:m.label, options:{ color:INK, fontSize:12, bold:true, fill:{ color:PANEL } } }];
+      weeks.forEach(function(w) {
+        cells.push({ text: String(w.data.stats[m.key]) + (m.suffix||''), options:{ color:INK, fontSize:12, align:'center', fill:{ color:PANEL } } });
+      });
+      var first = weeks[0].data.stats[m.key];
+      var last  = weeks[weeks.length - 1].data.stats[m.key];
+      cells.push({ text: trendText(first, last, m.suffix), options:{ color: trendColor(first, last), fontSize:11.5, bold:true, align:'center', fill:{ color:PANEL } } });
+      return cells;
+    });
+
+    s.addTable([header].concat(rows), {
+      x:0.6, y:1.5, w:12.1,
+      colW: [metricColW].concat(weeks.map(function() { return weekColW; }), [trendColW]),
+      border:{ type:'solid', color:BORDER, pt:0.75 },
+      fill:{ color:PANEL }, autoPage:false, rowH:0.55, valign:'middle',
+    });
+
+    footer(s);
+  }
+
+  if (weeks) {
+    weeks.forEach(function(w) { addSummarySlide(w.label, w.from + ' → ' + w.to, w.data); });
+    addSummarySlide('Combined — All Weeks', rangeLabel, combined);
+    addWeekAnalysisSlide(weeks);
+  } else {
+    addSummarySlide('Summary', rangeLabel, combined);
+  }
+
+  // Rejected listings detail — always the full/combined range (a per-week
+  // breakdown of individual rejected listings would just be noise; the
+  // Rejected KPI/column already shows the per-week and combined counts).
+  // Rows are packed by ESTIMATED WRAPPED HEIGHT (not a fixed row count) so a
+  // long Rejection Reason can never push the table past the footer.
+  var rejections = combined.rejectedRows.map(function(r) {
+    return {
+      req:    r['DP-REQ Number']     || '—',
+      ref:    r['Listing Reference'] || '—',
+      editor: r._editor              || '—',
+      reason: r['Rejection Reason']  || 'No reason recorded',
+    };
+  });
+
   var REASON_COL_W = 5.2; // inches — must match colW[3] below
   var CHARS_PER_LINE = Math.max(10, Math.floor(REASON_COL_W * 15)); // ~15 chars/inch at 11.5pt
   var TABLE_TOP = 1.6, FOOTER_Y = H - 0.6;
@@ -3214,7 +3325,7 @@ function generateReportPPTX() {
   pages.forEach(function(pageRows, pageNum) {
     var s = bgSlide();
     s.addText('Rejected Listings', { x:0.6, y:0.45, w:8, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
-    var sub = rangeLabel + '  ·  ' + rejections.length + ' item(s)' + (pageCount > 1 ? '  ·  Page ' + (pageNum+1) + ' of ' + pageCount : '');
+    var sub = rangeLabel + (weeks ? '  ·  Combined' : '') + '  ·  ' + rejections.length + ' item(s)' + (pageCount > 1 ? '  ·  Page ' + (pageNum+1) + ' of ' + pageCount : '');
     s.addText(sub, { x:0.6, y:0.95, w:11, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
 
     var header = ['DP-REQ Number','Listing Reference','Editor','Rejection Reason'].map(function(t) {
@@ -3250,7 +3361,7 @@ function generateReportPPTX() {
       fill:{ color:PANEL }, autoPage:false, rowH:rowHeights, valign:'middle',
     });
 
-    footer(s, 'Page ' + (3 + pageNum));
+    footer(s);
   });
 
   var rangeSlug = (S.fromDate && S.toDate) ? (S.fromDate + '_to_' + S.toDate) : (S.range || 'all');
