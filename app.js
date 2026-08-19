@@ -152,6 +152,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // ── Report export ─────────────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
     if (e.target && e.target.id === 'exportReportBtn') generateReportPPTX();
+    if (e.target && e.target.id === 'exportDataBtn') exportDataXLSX();
   });
 
   // ── Extension download modal ──────────────────────────────────────────────
@@ -1650,7 +1651,8 @@ function buildWeekAnalysisHTML(weeks) {
 
 function renderReport() {
   var wrap = document.getElementById('reportView');
-  var headerButtons = '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;">📄 Export Report</button>';
+  var headerButtons = '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;">📄 Export Report</button>'
+    + '<button class="modal-edit-btn" id="exportDataBtn" style="height:32px;padding:0 14px;font-size:12px;">📊 Export Data</button>';
 
   var segments = getWeekSegments();
 
@@ -3051,6 +3053,38 @@ function openAssignDashboardView() {
 // + editor tab is currently active on screen. Mirrors renderReport() exactly
 // so the numbers in the deck always match what's on screen.
 // Palette: Coolors "0a0908-22333b-f2f4f3-a9927d-5e503f"
+// ── Gather data for one range (whatever S.fromDate/S.toDate/S.range are
+// currently set to) — same source + same computation as the on-screen
+// report (computeEditorBreakdown() / computeReportStats()), so numbers in
+// both exports (PPTX and XLSX) can never drift from what's on screen or
+// from each other. Called directly for the combined/full-range data, and
+// via withDateRange() for each week's data so it can reuse the exact same
+// logic per week. Shared by generateReportPPTX() and exportDataXLSX().
+function gatherSlideData() {
+  var bd    = computeEditorBreakdown();
+  var stats = computeReportStats();
+  var compRate = bd.team.total > 0 ? Math.round(bd.team.completed / bd.team.total * 100) : 0;
+  return { allRows: bd.allRows, editorBreakdown: bd.editorBreakdown, team: bd.team, rejectedRows: bd.rejectedRows, compRate: compRate, stats: stats };
+}
+
+// Entry point for the standalone "Export Data" button — gathers the same
+// combined/weeks data generateReportPPTX() gathers for the deck, then hands
+// off to generateReportXLSX() to build the workbook. Kept separate from the
+// PPTX export so either can be run on its own.
+function exportDataXLSX() {
+  var combined = gatherSlideData();
+  var segments = getWeekSegments();
+  var weeks = segments && segments.map(function(seg) {
+    var data = withDateRange(seg.from, seg.to, gatherSlideData);
+    return { label: seg.label, from: seg.from, to: seg.to, data: data };
+  });
+  var rangeLabel = getRangeLabel();
+  var now = new Date();
+  var rangeSlug = (S.fromDate && S.toDate) ? (S.fromDate + '_to_' + S.toDate) : (S.range || 'all');
+  var dateSlug = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  generateReportXLSX(combined, weeks, rangeLabel, rangeSlug, dateSlug);
+}
+
 // ── Excel export — the raw data behind the PPTX ──────────────────────────
 // Takes the exact same `combined` (and, when the range is split, `weeks`)
 // objects generateReportPPTX() already computed via gatherSlideData(), so
@@ -3150,19 +3184,6 @@ function generateReportPPTX() {
   var GREEN     = '3F7D57'; // upward trend
   var FONT      = 'Calibri';
   var W = 13.33, H = 7.5;
-
-  // ── Gather data for one range (whatever S.fromDate/S.toDate/S.range are
-  // currently set to) — same source + same computation as the on-screen
-  // report (computeEditorBreakdown() / computeReportStats()), so numbers in
-  // the exported deck can never drift from what's on screen. Called directly
-  // for the combined/full-range data, and via withDateRange() for each
-  // week's data so it can reuse the exact same logic per week. ────────────
-  function gatherSlideData() {
-    var bd    = computeEditorBreakdown();
-    var stats = computeReportStats();
-    var compRate = bd.team.total > 0 ? Math.round(bd.team.completed / bd.team.total * 100) : 0;
-    return { editorBreakdown: bd.editorBreakdown, team: bd.team, rejectedRows: bd.rejectedRows, compRate: compRate, stats: stats };
-  }
 
   var combined = gatherSlideData();
 
@@ -3452,10 +3473,4 @@ function generateReportPPTX() {
   var rangeSlug = (S.fromDate && S.toDate) ? (S.fromDate + '_to_' + S.toDate) : (S.range || 'all');
   var dateSlug = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
   pres.writeFile({ fileName: 'DP-Report-' + rangeSlug + '-' + dateSlug + '.pptx' });
-
-  // Raw data behind this same deck, as an .xlsx — built from the identical
-  // `combined`/`weeks` objects above, so it can never disagree with the
-  // slides. Runs after writeFile() so the PPTX download always starts
-  // first regardless of how long the workbook takes to build.
-  generateReportXLSX(combined, weeks, rangeLabel, rangeSlug, dateSlug);
 }
