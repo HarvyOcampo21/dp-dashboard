@@ -3051,6 +3051,85 @@ function openAssignDashboardView() {
 // + editor tab is currently active on screen. Mirrors renderReport() exactly
 // so the numbers in the deck always match what's on screen.
 // Palette: Coolors "0a0908-22333b-f2f4f3-a9927d-5e503f"
+// ── Excel export — the raw data behind the PPTX ──────────────────────────
+// Takes the exact same `combined` (and, when the range is split, `weeks`)
+// objects generateReportPPTX() already computed via gatherSlideData(), so
+// this can never disagree with the deck — it's the same numbers, just laid
+// out as rows instead of slides. Three sheets:
+//   1. Raw Data       — every listing row in range, one per line, same
+//                        columns as the on-screen Table view (COLS).
+//   2. Editor Summary — the same per-editor + Team Total figures that
+//                        appear on the deck's summary slide(s). One block
+//                        per week plus a combined block when the report is
+//                        split into weeks.
+//   3. Rejected Listings — the same rows as the deck's Rejected Listings
+//                        slide(s).
+function generateReportXLSX(combined, weeks, rangeLabel, rangeSlug, dateSlug) {
+  if (typeof XLSX === 'undefined') {
+    alert('Excel export library failed to load. Check your internet connection and try again.');
+    return;
+  }
+
+  var wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Raw Data — every underlying row, Editor first, then the
+  // same field order as the on-screen Table view (COLS) so this lines up
+  // with what editors already see there.
+  var rawHeader = ['Editor'].concat(COLS);
+  var rawAOA = [rawHeader].concat(combined.allRows.map(function(r) {
+    return rawHeader.map(function(col) {
+      var key = col === 'Editor' ? '_editor' : col;
+      var v = r[key];
+      return v === undefined || v === null ? '' : v;
+    });
+  }));
+  var wsRaw = XLSX.utils.aoa_to_sheet(rawAOA);
+  wsRaw['!cols'] = rawHeader.map(function(h) { return { wch: Math.max(12, Math.min(32, h.length + 4)) }; });
+  wsRaw['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rawAOA.length - 1, c: rawHeader.length - 1 } }) };
+  XLSX.utils.book_append_sheet(wb, wsRaw, 'Raw Data');
+
+  // ── Sheet 2: Editor Summary — mirrors the deck's summary slide(s)
+  // exactly: one block per week (if split) plus the combined range, each
+  // with the same per-editor columns and Team Total row.
+  var summaryHeader = ['Editor','Photo','Agent','Offplan','Completed','Assigned','In progress','On-hold','Rejected','Total'];
+  function summaryBlockAOA(title, data) {
+    var rows = data.editorBreakdown.map(function(e) {
+      return [e.editor, e.photo, e.agent, e.offplan, e.completed, e.assigned, e.inProgress, e.onHold, e.rejected, e.total];
+    });
+    var team = data.team;
+    rows.push(['Team Total', team.photo, team.agent, team.offplan, team.completed, team.assigned, team.inProgress, team.onHold, team.rejected, team.total]);
+    return [[title], summaryHeader].concat(rows).concat([[]]); // trailing blank row as a spacer before the next block
+  }
+  var summaryAOA = [];
+  if (weeks) {
+    weeks.forEach(function(w) {
+      summaryAOA = summaryAOA.concat(summaryBlockAOA(w.label + '  (' + w.from + ' to ' + w.to + ')', w.data));
+    });
+    summaryAOA = summaryAOA.concat(summaryBlockAOA('Combined — ' + rangeLabel, combined));
+  } else {
+    summaryAOA = summaryBlockAOA(rangeLabel, combined);
+  }
+  var wsSummary = XLSX.utils.aoa_to_sheet(summaryAOA);
+  wsSummary['!cols'] = summaryHeader.map(function(h) { return { wch: Math.max(11, h.length + 3) }; });
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Editor Summary');
+
+  // ── Sheet 3: Rejected Listings — same source rows as the deck's
+  // Rejected Listings slide(s) (combined.rejectedRows), full raw fields.
+  var rejHeader = ['Editor'].concat(COLS);
+  var rejAOA = [rejHeader].concat(combined.rejectedRows.map(function(r) {
+    return rejHeader.map(function(col) {
+      var key = col === 'Editor' ? '_editor' : col;
+      var v = r[key];
+      return v === undefined || v === null ? '' : v;
+    });
+  }));
+  var wsRej = XLSX.utils.aoa_to_sheet(rejAOA);
+  wsRej['!cols'] = rejHeader.map(function(h) { return { wch: Math.max(12, Math.min(32, h.length + 4)) }; });
+  XLSX.utils.book_append_sheet(wb, wsRej, 'Rejected Listings');
+
+  XLSX.writeFile(wb, 'DP-Report-' + rangeSlug + '-' + dateSlug + '.xlsx');
+}
+
 function generateReportPPTX() {
   if (typeof PptxGenJS === 'undefined') {
     alert('Export library failed to load. Check your internet connection and try again.');
@@ -3373,4 +3452,10 @@ function generateReportPPTX() {
   var rangeSlug = (S.fromDate && S.toDate) ? (S.fromDate + '_to_' + S.toDate) : (S.range || 'all');
   var dateSlug = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
   pres.writeFile({ fileName: 'DP-Report-' + rangeSlug + '-' + dateSlug + '.pptx' });
+
+  // Raw data behind this same deck, as an .xlsx — built from the identical
+  // `combined`/`weeks` objects above, so it can never disagree with the
+  // slides. Runs after writeFile() so the PPTX download always starts
+  // first regardless of how long the workbook takes to build.
+  generateReportXLSX(combined, weeks, rangeLabel, rangeSlug, dateSlug);
 }
