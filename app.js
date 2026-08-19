@@ -149,9 +149,8 @@ document.addEventListener('DOMContentLoaded', function() {
     openAmenitiesModal();
   });
 
-  // ── Incoming requests edit ────────────────────────────────────────────────
+  // ── Report export ─────────────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
-    if (e.target && e.target.id === 'editIncomingBtn') openIncomingModal();
     if (e.target && e.target.id === 'exportReportBtn') generateReportPPTX();
   });
 
@@ -233,12 +232,6 @@ function fetchData(silent) {
           var curLife = (S.data['Lifestyle'] || []).length;
           if (newLife !== curLife) changed = true;
         }
-        if (!changed) {
-          var newInc = (newData['Incoming'] || []).length;
-          var curInc = (S.data['Incoming'] || []).length;
-          if (newInc !== curInc) changed = true;
-        }
-
         if (!changed) return; // Nothing new — leave UI completely alone
 
         // Save scroll positions before re-render
@@ -1323,37 +1316,6 @@ function getRangeLabel() {
   return 'All time';
 }
 
-function getTodayKey() {
-  var now = new Date();
-  return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-}
-
-function getIncomingForRange() {
-  var rows = (S.data['Incoming'] || []);
-  if (!rows.length) return null;
-  if (S.range === 'today' || (!S.range && !S.fromDate)) {
-    var todayKey = getTodayKey();
-    return rows.find(function(r) {
-      var d = parseAnyDate(r['Date']);
-      if (!d) return false;
-      var key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      return key === todayKey;
-    }) || null;
-  }
-  var inRange = rows.filter(rowInRange);
-  if (!inRange.length) return null;
-  return inRange.reduce(function(acc, r) {
-    return {
-      'Photo Request': (acc['Photo Request']||0) + (parseInt(r['Photo Request'],10)||0),
-      'Agent Request': (acc['Agent Request']||0) + (parseInt(r['Agent Request'],10)||0),
-      'Brochure':      (acc['Brochure']     ||0) + (parseInt(r['Brochure'],     10)||0),
-      'Lifestyle':     (acc['Lifestyle']    ||0) + (parseInt(r['Lifestyle'],    10)||0),
-      'Profile':       (acc['Profile']      ||0) + (parseInt(r['Profile'],      10)||0),
-      'Others':        (acc['Others']       ||0) + (parseInt(r['Others'],       10)||0),
-    };
-  }, {});
-}
-
 // Same date-bucket math as rowInRange(), but for an ISO timestamp coming
 // from an Assigner entry (assignedAt/startedAt/onHoldAt/...) rather than a
 // Copier row. Kept separate rather than reused because a MISSING timestamp
@@ -1442,18 +1404,87 @@ function computeEditorBreakdown() {
   return { allRows: allRows, rejectedRows: rejectedRows, editorBreakdown: editorBreakdown, team: team };
 }
 
-function renderReport() {
-  var wrap    = document.getElementById('reportView');
+// Runs fn() with S.fromDate/S.toDate/S.range temporarily swapped to a
+// specific [from, to] window (ISO 'YYYY-MM-DD' strings), then restores the
+// real filter state afterwards. Every date-scoped helper in this file
+// (rowInRange, entryInReportRange, computeEditorBreakdown, …) reads its
+// bounds from the S object rather than taking parameters, so this is the
+// one place that lets us reuse all of that logic to compute stats for an
+// arbitrary sub-range (e.g. a single week inside a longer selected range)
+// without duplicating a single line of filtering logic.
+function withDateRange(from, to, fn) {
+  var savedRange = S.range, savedFrom = S.fromDate, savedTo = S.toDate;
+  S.range = ''; S.fromDate = from; S.toDate = to;
+  try {
+    return fn();
+  } finally {
+    S.range = savedRange; S.fromDate = savedFrom; S.toDate = savedTo;
+  }
+}
+
+function fmtISODate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+// The [from, to] window the currently active filter represents, as ISO date
+// strings — or null if the active filter isn't a fixed span (today/
+// yesterday/week/all have no fixed end, so there's nothing to split into
+// weeks). Used only to decide whether renderReport() should break the report
+// into weekly sections.
+function getEffectiveRangeBounds() {
+  if (S.fromDate && S.toDate) return { from: S.fromDate, to: S.toDate };
+  if (S.range === 'month') {
+    var now = new Date();
+    var to   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var from = new Date(to); from.setMonth(from.getMonth() - 1);
+    return { from: fmtISODate(from), to: fmtISODate(to) };
+  }
+  return null;
+}
+
+// Splits the active range into consecutive 7-day "Week N" segments, only
+// when the range is long enough that weekly sections actually mean
+// something (10+ days — comfortably more than a single week, so the last
+// segment is never just a stray day or two). Returns null otherwise, in
+// which case renderReport() falls back to a single, non-split report.
+function getWeekSegments() {
+  var bounds = getEffectiveRangeBounds();
+  if (!bounds) return null;
+
+  var from = new Date(bounds.from);
+  var to   = new Date(bounds.to);
+  var totalDays = Math.round((to - from) / 86400000) + 1;
+  if (totalDays < 10) return null;
+
+  var segments = [];
+  var cursor = new Date(from);
+  var idx = 1;
+  while (cursor <= to) {
+    var segEnd = new Date(cursor);
+    segEnd.setDate(segEnd.getDate() + 6);
+    if (segEnd > to) segEnd = new Date(to);
+    segments.push({ label: 'Week ' + idx, from: fmtISODate(cursor), to: fmtISODate(segEnd) });
+    cursor.setDate(cursor.getDate() + 7);
+    idx++;
+  }
+  return segments.length > 1 ? segments : null;
+}
+
+// Pulls together every number the report needs for whatever range is
+// CURRENTLY active in S (fromDate/toDate/range) — same computation the
+// single-range report always used, just factored out so it can be reused
+// per-week as well as for the combined range.
+function computeReportStats() {
   var allRows = getAllRows().filter(rowInRange);
 
-  // ── Rejected rows are a SEPARATE metric — must NOT inflate other counts ─────
+  // ── Rejected rows are a SEPARATE metric — must NOT inflate other counts ──
   var rejectedRows = allRows.filter(function(r) { return norm(r['Status']) === 'rejected'; });
   var actualRej    = rejectedRows.length;
 
-  // Photo / Agent / Brochure counts (Incoming Requests cards) exclude rejected
+  // Photo / Agent / Brochure counts (Requests Summary cards) exclude rejected
   // rows but otherwise count all request VOLUME regardless of upload status —
-  // a different question from the Editor Breakdown table's "Completed" column
-  // below, which counts only what's actually been uploaded.
+  // a different question from the Editor Breakdown table's "Completed"
+  // column, which counts only what's actually been uploaded.
   var nonRejected = allRows.filter(function(r) { return norm(r['Status']) !== 'rejected'; });
   var actualPhoto  = nonRejected.filter(function(r) { return norm(r['List Type']) === 'photo request'; }).length;
   var actualAgent  = nonRejected.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
@@ -1464,90 +1495,82 @@ function renderReport() {
   var pending  = allRows.filter(function(r) { return norm(r['Status']) === 'pending' || norm(r['Status']) === 'ongoing'; }).length;
   var compRate = allRows.length > 0 ? Math.round(uploaded / allRows.length * 100) : 0;
 
-  var incoming = getIncomingForRange();
-  var expPhoto = incoming ? (parseInt(incoming['Photo Request'],10)||0) : null;
-  var expAgent = incoming ? (parseInt(incoming['Agent Request'],10)||0) : null;
-  var expBroch = incoming ? (parseInt(incoming['Brochure'],     10)||0) : null;
-  var expTotal = incoming ? (expPhoto + expAgent + expBroch) : null;
-
-  function diffBadge(actual, expected) {
-    if (expected === null) return '';
-    var diff = actual - expected;
-    if (diff === 0) return '<span class="inc-diff inc-even">✓</span>';
-    if (diff > 0)   return '<span class="inc-diff inc-over">▲ +' + diff + '</span>';
-    return '<span class="inc-diff inc-under">▼ ' + diff + '</span>';
-  }
-
-  function incCard(label, actual, expected, valClass) {
-    return '<div class="incoming-item">'
-      + '<div class="i-label">' + label + '</div>'
-      + '<div class="i-val ' + (valClass||'') + '">' + actual + '</div>'
-      + (expected !== null
-          ? '<div class="inc-expected">Expected: <strong>' + expected + '</strong>' + diffBadge(actual, expected) + '</div>'
-          : '<div class="inc-expected inc-no-data">No morning input</div>')
-      + '</div>';
-  }
-
   // ── Per-editor breakdown — Photo/Agent/Offplan/Completed from the Copier
   // sheet, Assigned/In progress/On-hold from the Assigner sheet, Rejected
   // from the Copier sheet. See computeEditorBreakdown() for why each column
   // is sourced where it is.
   var bd = computeEditorBreakdown();
-  var editorBreakdown = bd.editorBreakdown;
-  var team = bd.team;
 
-  function num(v, color, faint) {
-    var style = color ? ' style="color:' + color + '"' : '';
-    var cls = 'num-cell' + (v===0?' num-zero':'') + (faint?' num-faint':'');
-    var display = (v === 0 && faint) ? '' : v;
-    return '<td class="' + cls + '"' + style + '>' + display + '</td>';
-  }
+  return {
+    actualPhoto: actualPhoto, actualAgent: actualAgent, actualBroch: actualBroch,
+    actualRej: actualRej, actualTotal: actualTotal,
+    uploaded: uploaded, pending: pending, compRate: compRate,
+    editorBreakdown: bd.editorBreakdown, team: bd.team,
+  };
+}
 
-  var editorRows = editorBreakdown.map(function(r) {
+function numCell(v, color, faint) {
+  var style = color ? ' style="color:' + color + '"' : '';
+  var cls = 'num-cell' + (v===0?' num-zero':'') + (faint?' num-faint':'');
+  var display = (v === 0 && faint) ? '' : v;
+  return '<td class="' + cls + '"' + style + '>' + display + '</td>';
+}
+
+function summaryCard(label, actual, valClass) {
+  return '<div class="incoming-item">'
+    + '<div class="i-label">' + label + '</div>'
+    + '<div class="i-val ' + (valClass||'') + '">' + actual + '</div>'
+    + '</div>';
+}
+
+// Renders one full report block (summary cards + editor table) for a given
+// stats object. Shared by the single-range report, each weekly section, and
+// the combined section — so all three always render identically.
+function buildReportSectionHTML(stats, title, subtitle, headerButtonsHtml) {
+  var editorRows = stats.editorBreakdown.map(function(r) {
     return '<tr>'
       + '<td class="editor-name">' + esc(r.editor) + '</td>'
       + '<td class="num-cell hl-soft">' + r.photo   + '</td>'
       + '<td class="num-cell hl-soft">' + r.agent   + '</td>'
       + '<td class="num-cell hl-soft">' + r.offplan + '</td>'
       + '<td class="num-cell hl-strong">' + r.completed + '</td>'
-      + num(r.assigned,   null, true)
-      + num(r.inProgress, null, true)
-      + num(r.onHold,     null, true)
-      + num(r.rejected, r.rejected > 0 ? 'var(--red)' : null, true)
+      + numCell(r.assigned,   null, true)
+      + numCell(r.inProgress, null, true)
+      + numCell(r.onHold,     null, true)
+      + numCell(r.rejected, r.rejected > 0 ? 'var(--red)' : null, true)
       + '<td class="num-cell" style="font-weight:700">' + r.total + '</td>'
       + '</tr>';
   }).join('');
 
   // colspan for pending/rate rows = 8 (photo+agent+offplan+completed+assigned+inProgress+onHold+rejected)
   var footColspan = '8';
+  var team = stats.team;
 
-  wrap.innerHTML =
-    '<div class="report-header">'
-    + '<div>'
-    +   '<div class="report-title">Daily Report</div>'
-    +   '<div class="report-subtitle">' + esc(getRangeLabel()) + '</div>'
-    + '</div>'
-    + '<button class="modal-edit-btn" id="editIncomingBtn" style="height:32px;padding:0 14px;font-size:12px;">✏️ Morning Input</button>'
-    +   '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;margin-left:8px;">📄 Export Report</button>'
-    + '</div>'
+  var headerHtml = title
+    ? ('<div class="report-header">'
+      + '<div>'
+      +   '<div class="report-title">' + esc(title) + '</div>'
+      +   '<div class="report-subtitle">' + esc(subtitle) + '</div>'
+      + '</div>'
+      + (headerButtonsHtml || '')
+      + '</div>')
+    : '';
+
+  return headerHtml
 
     + '<div class="report-incoming">'
-    +   '<h3>Incoming Requests <span style="font-size:10px;font-weight:400;color:var(--text3);margin-left:8px;">ACTUAL vs EXPECTED</span></h3>'
+    +   '<h3>Requests Summary</h3>'
     +   '<div class="incoming-grid">'
-    +     incCard('📷 Photographer Photos',   actualPhoto,     expPhoto, 'blue')
-    +     incCard('🏠 Agent Property Photos',  actualAgent,     expAgent, 'orange')
-    +     incCard('📄 Offplan / Brochure',     actualBroch,     expBroch, 'green')
+    +     summaryCard('📷 Photographer Photos',  stats.actualPhoto, 'blue')
+    +     summaryCard('🏠 Agent Property Photos', stats.actualAgent, 'orange')
+    +     summaryCard('📄 Offplan / Brochure',    stats.actualBroch, 'green')
     +     '<div class="incoming-item">'
     +       '<div class="i-label">❌ Rejected</div>'
-    +       '<div class="i-val" style="color:var(--red)">' + actualRej + '</div>'
-    +       '<div class="inc-expected inc-no-data">Independent metric</div>'
+    +       '<div class="i-val" style="color:var(--red)">' + stats.actualRej + '</div>'
     +     '</div>'
     +     '<div class="incoming-item">'
     +       '<div class="i-label">Total Processed</div>'
-    +       '<div class="i-val white">' + actualTotal + '</div>'
-    +       (expTotal !== null
-              ? '<div class="inc-expected">Expected: <strong>' + expTotal + '</strong>' + diffBadge(actualTotal, expTotal) + '</div>'
-              : '<div class="inc-expected inc-no-data">No morning input</div>')
+    +       '<div class="i-val white">' + stats.actualTotal + '</div>'
     +     '</div>'
     +   '</div>'
     + '</div>'
@@ -1567,119 +1590,114 @@ function renderReport() {
     +     '<td class="num-cell hl-soft">' + team.agent + '</td>'
     +     '<td class="num-cell hl-soft">' + team.offplan + '</td>'
     +     '<td class="num-cell hl-strong">' + team.completed + '</td>'
-    +     num(team.assigned,   null, true)
-    +     num(team.inProgress, null, true)
-    +     num(team.onHold,     null, true)
-    +     num(team.rejected, team.rejected > 0 ? 'var(--red)' : null, true)
+    +     numCell(team.assigned,   null, true)
+    +     numCell(team.inProgress, null, true)
+    +     numCell(team.onHold,     null, true)
+    +     numCell(team.rejected, team.rejected > 0 ? 'var(--red)' : null, true)
     +     '<td class="num-cell" style="font-weight:700">' + team.total + '</td>'
     +   '</tr>'
-    +   '<tr class="pending-row"><td>Pending</td><td colspan="' + footColspan + '"></td><td class="num-cell">' + pending + '</td></tr>'
-    +   '<tr class="rate-row"><td>Completion Rate</td><td colspan="' + footColspan + '"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td><td class="num-cell">' + compRate + '%</td></tr>'
+    +   '<tr class="pending-row"><td>Pending</td><td colspan="' + footColspan + '"></td><td class="num-cell">' + stats.pending + '</td></tr>'
+    +   '<tr class="rate-row"><td>Completion Rate</td><td colspan="' + footColspan + '"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td><td class="num-cell">' + stats.compRate + '%</td></tr>'
     +   '</tbody></table>'
     + '</div>';
 }
-// ─── Incoming Modal ───────────────────────────────────────────────────────────
-function openIncomingModal() {
-  var existing = document.getElementById('incomingModalBg');
-  if (existing) existing.remove();
 
-  var todayRow = (S.range === 'today' || !S.range) ? getIncomingForRange() : null;
-  var fields = [
-    { key:'Photo Request', label:'📷 Photographer Photos', color:'var(--blue)' },
-    { key:'Agent Request', label:'🏠 Agent Property Photos', color:'var(--orange)' },
-    { key:'Brochure',      label:'📄 Offplan / Brochure',   color:'var(--green)' },
-    { key:'Lifestyle',     label:'🎬 Lifestyle',             color:'var(--purple)' },
-    { key:'Profile',       label:'👤 Profile',               color:'var(--blue)' },
-    { key:'Others',        label:'📦 Others',                color:'var(--orange)' },
+// Week-over-week comparison table shown under the weekly sections — one row
+// per metric, one column per week, plus a trend column comparing the first
+// week to the last so a multi-week swing is visible at a glance.
+function buildWeekAnalysisHTML(weeks) {
+  var metrics = [
+    { key: 'actualPhoto', label: '📷 Photographer Photos' },
+    { key: 'actualAgent', label: '🏠 Agent Property Photos' },
+    { key: 'actualBroch', label: '📄 Offplan / Brochure' },
+    { key: 'actualRej',   label: '❌ Rejected' },
+    { key: 'actualTotal', label: 'Total Processed' },
+    { key: 'compRate',    label: 'Completion Rate', suffix: '%' },
   ];
 
-  var today = new Date().toLocaleDateString('en-GB', { weekday:'long', day:'2-digit', month:'short', year:'numeric' });
+  function trendCell(first, last, suffix) {
+    var diff = last - first;
+    if (diff === 0) return '<span class="inc-diff inc-even">— even</span>';
+    var pct = first !== 0 ? Math.round((diff / first) * 100) : null;
+    var cls   = diff > 0 ? 'inc-over' : 'inc-under';
+    var arrow = diff > 0 ? '▲' : '▼';
+    var pctTxt = pct === null ? '' : ' (' + (diff > 0 ? '+' : '') + pct + '%)';
+    return '<span class="inc-diff ' + cls + '">' + arrow + ' ' + (diff > 0 ? '+' : '') + diff + (suffix||'') + pctTxt + '</span>';
+  }
 
-  var inputsHtml = fields.map(function(f) {
-    var val = todayRow ? (parseInt(todayRow[f.key],10)||0) : 0;
-    return '<div class="detail-item">'
-      + '<div class="d-label" style="color:' + f.color + '">' + f.label + '</div>'
-      + '<input class="edit-input incoming-field" type="number" min="0" step="1" data-field="' + esc(f.key) + '" value="' + val + '" placeholder="0">'
-      + '</div>';
+  var headerCells = weeks.map(function(w) {
+    return '<th>' + esc(w.label) + '<br><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:9px;">'
+      + esc(w.from) + ' → ' + esc(w.to) + '</span></th>';
   }).join('');
 
-  var overlay = document.createElement('div');
-  overlay.id = 'incomingModalBg';
-  overlay.className = 'modal-bg';
-  overlay.style.display = 'flex';
-  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  var bodyRows = metrics.map(function(m) {
+    var cells = weeks.map(function(w) {
+      return '<td class="num-cell">' + w.stats[m.key] + (m.suffix||'') + '</td>';
+    }).join('');
+    var first = weeks[0].stats[m.key];
+    var last  = weeks[weeks.length - 1].stats[m.key];
+    return '<tr><td class="editor-name">' + m.label + '</td>' + cells
+      + '<td class="num-cell">' + trendCell(first, last, m.suffix) + '</td></tr>';
+  }).join('');
 
-  overlay.innerHTML = '<div class="modal" style="max-width:500px;">'
-    + '<div class="modal-head">'
-    +   '<div>'
-    +     '<div class="modal-req" style="font-size:16px;">✏️ Morning Input</div>'
-    +     '<div class="modal-ref">' + esc(today) + '</div>'
-    +     '<div style="margin-top:4px;font-size:11px;font-family:var(--mono);color:var(--text3)">Enter expected request counts for today. Updates if already submitted.</div>'
-    +   '</div>'
-    +   '<button class="modal-close" id="incomingCloseBtn">✕</button>'
-    + '</div>'
-    + '<div class="edit-form-grid" style="margin-bottom:16px;">' + inputsHtml + '</div>'
-    + '<div class="edit-actions">'
-    +   '<button class="edit-save-btn" id="incomingSaveBtn">Save Morning Input</button>'
-    +   '<button class="edit-cancel-btn" id="incomingCancelBtn">Cancel</button>'
-    + '</div>'
-    + '<p id="incomingFeedback" style="font-size:12px;margin-top:10px;font-family:var(--mono);display:none;"></p>'
+  return '<div class="report-table-wrap" style="margin-top:8px;">'
+    +   '<table class="report-table"><thead><tr>'
+    +     '<th>Metric</th>' + headerCells
+    +     '<th>Trend (Wk 1 → Wk ' + weeks.length + ')</th>'
+    +   '</tr></thead><tbody>' + bodyRows + '</tbody></table>'
     + '</div>';
-
-  document.body.appendChild(overlay);
-  document.getElementById('incomingCloseBtn').onclick  = function() { overlay.remove(); };
-  document.getElementById('incomingCancelBtn').onclick = function() { overlay.remove(); };
-  document.getElementById('incomingSaveBtn').onclick   = function() { saveIncoming(overlay); };
 }
 
-function saveIncoming(overlay) {
-  var inputs = overlay.querySelectorAll('.incoming-field');
-  var data   = {};
-  inputs.forEach(function(inp) { data[inp.dataset.field] = parseInt(inp.value,10)||0; });
+function renderReport() {
+  var wrap = document.getElementById('reportView');
+  var headerButtons = '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;">📄 Export Report</button>';
 
-  var btn      = document.getElementById('incomingSaveBtn');
-  var feedback = document.getElementById('incomingFeedback');
-  btn.textContent = 'Saving…';
-  btn.disabled    = true;
+  var segments = getWeekSegments();
 
-  fetch(S.url, {
-    method:  'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body:    JSON.stringify({ action: 'saveIncoming', data: data })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(json) {
-    btn.textContent = 'Save Morning Input';
-    btn.disabled    = false;
-    if (!json.success) {
-      feedback.textContent = '❌ ' + (json.error || 'Unknown error');
-      feedback.style.color = 'var(--red)';
-      feedback.style.display = 'block';
-      return;
-    }
-    var todayStr = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-    if (!S.data['Incoming']) S.data['Incoming'] = [];
-    var todayKey = getTodayKey();
-    var existIdx = -1;
-    S.data['Incoming'].forEach(function(r, i) {
-      var d = parseAnyDate(r['Date']);
-      if (!d) return;
-      var key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      if (key === todayKey) existIdx = i;
-    });
-    var newRow = Object.assign({ 'Date': todayStr }, data);
-    if (existIdx >= 0) { S.data['Incoming'][existIdx] = newRow; }
-    else { S.data['Incoming'].push(newRow); }
-    overlay.remove();
-    renderReport();
-  })
-  .catch(function(err) {
-    btn.textContent = 'Save Morning Input';
-    btn.disabled    = false;
-    feedback.textContent = '❌ ' + err.message;
-    feedback.style.color = 'var(--red)';
-    feedback.style.display = 'block';
+  // Single range — same report as always, no weekly split.
+  if (!segments) {
+    var stats = computeReportStats();
+    wrap.innerHTML = buildReportSectionHTML(stats, 'Daily Report', getRangeLabel(), headerButtons);
+    return;
+  }
+
+  // Multi-week range — a section per week (computed by temporarily scoping
+  // the shared date filters to that week), then a Combined section for the
+  // full selected range, then a week-over-week analysis of the combined data.
+  var weeks = segments.map(function(seg) {
+    var wStats = withDateRange(seg.from, seg.to, computeReportStats);
+    return { label: seg.label, from: seg.from, to: seg.to, stats: wStats };
   });
+
+  var combinedStats = computeReportStats();
+
+  var html = '<div class="report-header" style="margin-bottom:20px;">'
+    + '<div>'
+    +   '<div class="report-title">Daily Report</div>'
+    +   '<div class="report-subtitle">' + esc(getRangeLabel()) + ' · split into ' + weeks.length + ' weekly sections</div>'
+    + '</div>'
+    + headerButtons
+    + '</div>';
+
+  weeks.forEach(function(w) {
+    html += '<div class="report-week-block">'
+      + buildReportSectionHTML(w.stats, w.label, w.from + ' → ' + w.to, '')
+      + '</div>';
+  });
+
+  html += '<div class="report-week-block">'
+    + '<div class="report-title" style="font-size:15px;margin-bottom:2px;">📊 Combined — All Weeks</div>'
+    + '<div class="report-subtitle" style="margin-bottom:14px;">' + esc(getRangeLabel()) + '</div>'
+    + buildReportSectionHTML(combinedStats, '', '', '')
+    + '</div>';
+
+  html += '<div class="report-week-block">'
+    + '<div class="report-title" style="font-size:15px;margin-bottom:2px;">📈 Week-over-Week Analysis</div>'
+    + '<div class="report-subtitle" style="margin-bottom:14px;">How the combined totals moved between weeks</div>'
+    + buildWeekAnalysisHTML(weeks)
+    + '</div>';
+
+  wrap.innerHTML = html;
 }
 
 // ─── Delete (Pending/Ongoing only) ───────────────────────────────────────────

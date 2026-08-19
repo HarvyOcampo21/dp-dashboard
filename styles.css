@@ -1634,6 +1634,8 @@ select.edit-input option { background: var(--bg2); }
 .incoming-item .i-val.green  { color: var(--green); }
 .incoming-item .i-val.yellow { color: var(--yellow); }
 .incoming-item .i-val.white  { color: var(--text); }
+.report-week-block { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px dashed var(--border); }
+.report-week-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .report-table-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r2); overflow: hidden; }
 .report-table { width: 100%; border-collapse: collapse; }
 .report-table th { background: var(--bg3); padding: 10px 16px; text-align: left; font-family: var(--mono); font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -2451,27 +2453,8 @@ body.light .date-in    { color-scheme: light; }
   --text3:     #a84070;
 }
 
-/* ── Incoming Expected vs Actual ──────────────── */
-.inc-expected {
-  font-size: 10px;
-  font-family: var(--mono);
-  color: var(--text3);
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-.inc-expected strong { color: var(--text2); }
-
-.inc-no-data {
-  font-style: italic;
-  color: var(--text3);
-  font-size: 10px;
-  margin-top: 6px;
-  font-family: var(--mono);
-}
-
+/* ── Week-over-week trend badges (also reused wherever a simple
+   up/down/even indicator is needed) ──────────────── */
 .inc-diff {
   display: inline-block;
   font-size: 10px;
