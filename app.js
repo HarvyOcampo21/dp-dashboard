@@ -1651,8 +1651,10 @@ function buildWeekAnalysisHTML(weeks) {
 
 function renderReport() {
   var wrap = document.getElementById('reportView');
-  var headerButtons = '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;">📄 Export Report</button>'
-    + '<button class="modal-edit-btn" id="exportDataBtn" style="height:32px;padding:0 14px;font-size:12px;">📊 Export Data</button>';
+  var headerButtons = '<div style="display:flex;gap:8px;">'
+    + '<button class="modal-edit-btn" id="exportReportBtn" style="height:32px;padding:0 14px;font-size:12px;">📄 Export Report</button>'
+    + '<button class="modal-edit-btn" id="exportDataBtn" style="height:32px;padding:0 14px;font-size:12px;">📊 Export Data</button>'
+    + '</div>';
 
   var segments = getWeekSegments();
 
