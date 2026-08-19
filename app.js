@@ -1,3 +1,24 @@
+// ─── App Version ────────────────────────────────────────────────────────────
+// VERSIONING POLICY — read before editing this file:
+//   Every time this codebase is changed — by a developer, by pasting it into
+//   another Claude/AI session and asking for edits, or by processing it on a
+//   different account/machine — whoever makes the change MUST:
+//     1. Bump APP_VERSION below using semver (MAJOR.MINOR.PATCH):
+//          MAJOR → breaking change / major redesign
+//          MINOR → new feature, non-breaking
+//          PATCH → bug fix, small tweak, copy/style change
+//     2. Add a new entry at the TOP of APP_CHANGELOG (newest first) with the
+//        new version, the date, and a one-line description of what changed.
+//   The footer (index.html) reads APP_VERSION automatically, so it always
+//   reflects whatever is set here — no need to edit the footer by hand.
+//   Keeping this history in the file itself means that if a bug ships, we can
+//   scan APP_CHANGELOG to see exactly which version introduced it and revert
+//   to the last known-good version/commit.
+var APP_VERSION = '1.0.0';
+var APP_CHANGELOG = [
+  { version: '1.0.0', date: '2026-08-19', notes: 'Combined-first report ordering, week-over-week trend explanation, footer with auto-tracked version.' },
+];
+
 // ─── Modal row reference (used by edit) ──────────────────────────────────────
 var MODAL_ROW = null;
 
@@ -40,6 +61,10 @@ var EXCLUDED_TABS = ['Lifestyle', 'Amenities', 'Incoming', 'Assignments', 'Email
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+
+  // ── Footer version (single source of truth: APP_VERSION above) ─────────────
+  var footerVersionEl = document.getElementById('appFooterVersion');
+  if (footerVersionEl) footerVersionEl.textContent = APP_VERSION;
 
   // ── Theme & mode init (runs first so no flash) ──────────────────────────────
   initTheme();
@@ -1683,6 +1708,13 @@ function renderReport() {
     + headerButtons
     + '</div>';
 
+  // Combined section always renders first, above the per-week breakdowns.
+  html += '<div class="report-week-block">'
+    + '<div class="report-title" style="font-size:15px;margin-bottom:2px;">📊 Combined — All Weeks</div>'
+    + '<div class="report-subtitle" style="margin-bottom:14px;">' + esc(getRangeLabel()) + '</div>'
+    + buildReportSectionHTML(combinedStats, '', '', '')
+    + '</div>';
+
   weeks.forEach(function(w) {
     html += '<div class="report-week-block">'
       + buildReportSectionHTML(w.stats, w.label, w.from + ' → ' + w.to, '')
@@ -1690,15 +1722,15 @@ function renderReport() {
   });
 
   html += '<div class="report-week-block">'
-    + '<div class="report-title" style="font-size:15px;margin-bottom:2px;">📊 Combined — All Weeks</div>'
-    + '<div class="report-subtitle" style="margin-bottom:14px;">' + esc(getRangeLabel()) + '</div>'
-    + buildReportSectionHTML(combinedStats, '', '', '')
-    + '</div>';
-
-  html += '<div class="report-week-block">'
     + '<div class="report-title" style="font-size:15px;margin-bottom:2px;">📈 Week-over-Week Analysis</div>'
     + '<div class="report-subtitle" style="margin-bottom:14px;">How the combined totals moved between weeks</div>'
     + buildWeekAnalysisHTML(weeks)
+    + '<div class="report-subtitle" style="margin-top:10px;font-size:11px;line-height:1.6;">'
+    +   'The trend column compares <strong>Week 1</strong> against the most recent week (<strong>Week ' + weeks.length + '</strong>). '
+    +   'For each metric, we take the difference (last week\'s value minus week 1\'s value) and, where week 1 isn\'t zero, express that '
+    +   'difference as a percentage change relative to week 1. A ▲ means the metric increased over the period, a ▼ means it decreased, '
+    +   'and "— even" means it stayed the same. Weeks in between are shown for reference but aren\'t part of the trend calculation.'
+    + '</div>'
     + '</div>';
 
   wrap.innerHTML = html;
