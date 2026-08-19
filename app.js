@@ -2273,11 +2273,6 @@ var ASSIGN_CATEGORY_OPTIONS = ['Offplan Pending', 'Photos For QC', 'Stock Photos
 var ASSIGN_BED_TRACKED_CATEGORIES = ['Upload Pending'];
 var ASSIGN_BED_BUCKETS = ['0', '1', '2', '3', '4', '5+', '?'];
 var ASSIGN_DATA = { assignments: [], loaded: false };
-// enabled: the toggle's own on/off state. withinWindow: whether it's
-// currently 9:00-17:30 Dubai time. active: enabled && withinWindow — this
-// is what the 3-state indicator actually shows, since "enabled but outside
-// hours" (Paused) is a normal expected state, not the same as fully Off.
-var AUTO_ASSIGN_STATUS = { enabled: false, withinWindow: false, active: false, roster: [], loaded: false };
 var ASSIGN_DASH_VIEW_ACTIVE = false;
 var ASSIGN_POLL_INTERVAL = null;
 var ASSIGN_SCOPE = 'today'; // 'today' | 'yesterday' | 'week' | 'all' | { type:'custom', start, end }
@@ -2673,38 +2668,6 @@ function assignAutoSearchInCRM(ref, actionEl) {
   } catch (e) { /* extension messaging unavailable — clipboard copy still worked */ }
 }
 
-// 3-state indicator, not a plain on/off: "enabled but outside the 9am–5:30pm
-// Dubai window" is a normal, expected state (Paused), distinct from fully
-// disabled (Off) — collapsing those into one state would make the toggle
-// look "off" every evening/morning even when nothing needs fixing, since
-// it'll resume automatically at 9am with no action needed.
-function renderAutoAssignToggleHtml() {
-  if (!AUTO_ASSIGN_STATUS.loaded) {
-    return '<div style="font-size:12px;color:#6b7280;">Auto-Assign \u2014 checking\u2026</div>';
-  }
-  var enabled = AUTO_ASSIGN_STATUS.enabled;
-  var active = AUTO_ASSIGN_STATUS.active;
-  var stateColor = active ? '#00d1b2' : (enabled ? '#e6941a' : '#6b7280');
-  var stateLabel = active ? 'Active' : (enabled ? 'Paused \u2014 outside 9am\u20135:30pm' : 'Off');
-  var trackBg = enabled ? '#00d1b2' : '#353b4d';
-  var knobLeft = enabled ? '18px' : '2px';
-
-  return ''
-    + '<div style="display:flex;align-items:center;gap:10px;">'
-    +   '<span style="font-size:12px;color:#9aa0ad;font-weight:600;">Auto-Assign</span>'
-    +   '<button type="button" id="autoAssignSwitch" title="' + esc(stateLabel) + ' \u2014 click to toggle" '
-    +     'style="position:relative;width:36px;height:20px;border-radius:10px;border:none;cursor:pointer;'
-    +     'background:' + trackBg + ';flex-shrink:0;transition:background .15s;padding:0;">'
-    +     '<span style="position:absolute;top:2px;left:' + knobLeft + ';width:16px;height:16px;border-radius:50%;'
-    +     'background:#fff;transition:left .15s;"></span>'
-    +   '</button>'
-    +   '<span style="display:flex;align-items:center;gap:5px;font-size:11px;color:' + stateColor + ';font-weight:700;white-space:nowrap;">'
-    +     '<span style="width:7px;height:7px;border-radius:50%;background:' + stateColor + ';display:inline-block;"></span>'
-    +     esc(stateLabel)
-    +   '</span>'
-    + '</div>';
-}
-
 function renderAssignDashboard() {
   var inner = document.getElementById('assignDashView');
   if (!inner) return;
@@ -2740,15 +2703,12 @@ function renderAssignDashboard() {
       + ' \u00B7 <span class="dp-dash-live-time" id="assignLiveTime">' + esc(assignFmtTime(new Date())) + '</span></div>'
     : '';
 
-  var autoAssignHtml = renderAutoAssignToggleHtml();
-
   var headerHtml =
     '<div class="report-header">'
     +   '<div>'
     +     '<div class="report-title">\uD83D\uDCCA Assignment Dashboard</div>'
     +     '<div class="report-subtitle">From the Assignments tab \u2014 same data as the CRM extension</div>'
     +   '</div>'
-    +   autoAssignHtml
     + '</div>'
     + scopeRowHtml + customRangeHtml + dateInfoHtml;
 
@@ -2797,20 +2757,6 @@ function renderAssignDashboard() {
 }
 
 function assignWireDashboardControls() {
-  var autoAssignSwitch = document.getElementById('autoAssignSwitch');
-  if (autoAssignSwitch) {
-    autoAssignSwitch.addEventListener('click', function() {
-      if (!AUTO_ASSIGN_STATUS.loaded || autoAssignSwitch.disabled) return;
-      autoAssignSwitch.disabled = true;
-      setAutoAssignEnabled(!AUTO_ASSIGN_STATUS.enabled, function(err) {
-        if (err) console.error('Auto-Assign toggle failed:', err);
-        // No need to manually re-enable here — setAutoAssignEnabled always
-        // calls renderAssignDashboard on both success and failure, which
-        // rebuilds this whole button fresh (and thus un-disabled) either way.
-      });
-    });
-  }
-
   document.querySelectorAll('#assignScopePills [data-scope]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       var next = btn.dataset.scope;
@@ -2945,63 +2891,6 @@ function fetchAssignData(cb, silent) {
     });
 }
 
-// Read-only — current enabled/window/active state, for the header toggle's
-// 3-state indicator. Cheap, no lock contention server-side (goes through
-// doGet, not doPost), safe to poll on the same cadence as assignment data.
-function fetchAutoAssignStatus(cb) {
-  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN + '&action=autoAssignStatus', { cache: 'no-store' })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data || data.error) { if (cb) cb(data && data.error); return; }
-      AUTO_ASSIGN_STATUS.enabled = !!data.enabled;
-      AUTO_ASSIGN_STATUS.withinWindow = !!data.withinWindow;
-      AUTO_ASSIGN_STATUS.active = !!data.active;
-      AUTO_ASSIGN_STATUS.roster = Array.isArray(data.roster) ? data.roster : [];
-      AUTO_ASSIGN_STATUS.loaded = true;
-      if (cb) cb(null);
-    })
-    .catch(function(err) {
-      console.error('Auto-assign status fetch failed', err);
-      if (cb) cb(err);
-    });
-}
-
-// Writes the toggle. Applies for everyone immediately (server-side flag),
-// not just this browser tab. Optimistically flips the local state right
-// away so the toggle feels instant, then reconciles with the server's
-// actual response — reverting the optimistic flip on failure rather than
-// leaving the UI showing something that didn't actually take effect.
-function setAutoAssignEnabled(nextEnabled, cb) {
-  var prevEnabled = AUTO_ASSIGN_STATUS.enabled;
-  AUTO_ASSIGN_STATUS.enabled = nextEnabled;
-  AUTO_ASSIGN_STATUS.active = nextEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-  renderAssignDashboard();
-
-  fetch(S.assignUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ token: ASSIGN_TOKEN, action: 'setAutoAssignEnabled', enabled: nextEnabled }),
-  })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data || data.error || data.enabled !== nextEnabled) {
-        AUTO_ASSIGN_STATUS.enabled = prevEnabled;
-        AUTO_ASSIGN_STATUS.active = prevEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-        renderAssignDashboard();
-        if (cb) cb((data && data.error) || 'Did not save — please try again');
-        return;
-      }
-      fetchAutoAssignStatus(function() { renderAssignDashboard(); });
-      if (cb) cb(null);
-    })
-    .catch(function(err) {
-      AUTO_ASSIGN_STATUS.enabled = prevEnabled;
-      AUTO_ASSIGN_STATUS.active = prevEnabled && AUTO_ASSIGN_STATUS.withinWindow;
-      renderAssignDashboard();
-      if (cb) cb(String(err));
-    });
-}
-
 function assignStartClock() {
   assignStopClock();
   ASSIGN_CLOCK_INTERVAL = setInterval(function() {
@@ -3026,7 +2915,6 @@ function assignStartPoll() {
   ASSIGN_POLL_INTERVAL = setInterval(function() {
     if (document.visibilityState === 'visible' && ASSIGN_DASH_VIEW_ACTIVE) {
       fetchAssignData(function() { renderAssignDashboard(); }, true);
-      fetchAutoAssignStatus(function() { renderAssignDashboard(); });
     }
   }, ASSIGN_POLL_MS);
 }
@@ -3038,7 +2926,6 @@ function assignStopPoll() {
 function openAssignDashboardView() {
   renderAssignDashboard(); // show something immediately (loading state)
   fetchAssignData(function() { renderAssignDashboard(); });
-  fetchAutoAssignStatus(function() { renderAssignDashboard(); });
   assignStartClock();
   assignStartPoll();
 }
@@ -3234,20 +3121,11 @@ function generateReportPPTX() {
 
   // Summary + Editor Breakdown slide — used once for a single-range report,
   // or once per week plus once for the combined range when the report is
-  // split into weeks. Layout numbers match the original single-slide design,
-  // just with a "Requests Summary" line inserted under the subtitle so each
-  // slide also carries the same actual-volume numbers the on-screen
-  // Requests Summary cards show for that same range.
+  // split into weeks.
   function addSummarySlide(title, subtitle, data) {
     var s = bgSlide();
     s.addText(title, { x:0.6, y:0.4, w:9.5, h:0.5, fontFace:FONT, fontSize:26, color:INK, bold:true });
     s.addText(subtitle, { x:0.6, y:0.88, w:9.5, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
-
-    var st = data.stats;
-    var reqLine = '📷 Photo ' + st.actualPhoto + '   🏠 Agent ' + st.actualAgent
-      + '   📄 Offplan ' + st.actualBroch + '   ❌ Rejected ' + st.actualRej
-      + '   ·   Total Processed ' + st.actualTotal;
-    s.addText(reqLine, { x:0.6, y:1.22, w:12.1, h:0.3, fontFace:FONT, fontSize:10.5, color:BROWN });
 
     var team = data.team;
     var kpis = [
@@ -3260,7 +3138,7 @@ function generateReportPPTX() {
       { label: 'Completion Rate', val: data.compRate + '%', color: BROWN },
     ];
 
-    var cardGap = 0.2, startX = 0.6, cardY = 1.62, cardH = 1.2;
+    var cardGap = 0.2, startX = 0.6, cardY = 1.3, cardH = 1.2;
     var cardW = (12.1 - (kpis.length - 1) * cardGap) / kpis.length;
     kpis.forEach(function(k, i) {
       var x = startX + i * (cardW + cardGap);
