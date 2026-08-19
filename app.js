@@ -2920,7 +2920,11 @@ document.addEventListener('click', function(e) {
 });
 
 function fetchAssignData(cb, silent) {
-  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN, { cache: 'no-store' })
+  // Matches the extension's background.js fetchWithTimeout() call exactly —
+  // no cache option set, so this behaves the same way the extension's
+  // fetch does (subject to normal browser HTTP caching), rather than
+  // forcing a network round-trip on every poll the way 'no-store' did.
+  fetch(S.assignUrl + '?token=' + ASSIGN_TOKEN)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var next = (data && Array.isArray(data.assignments)) ? data.assignments : [];
@@ -3011,10 +3015,12 @@ function assignStopClock() {
   if (ASSIGN_CLOCK_INTERVAL) { clearInterval(ASSIGN_CLOCK_INTERVAL); ASSIGN_CLOCK_INTERVAL = null; }
 }
 
-// Background refresh while the dashboard tab is open — the extension's own
-// dashboard polls every 15s (REFRESH_INTERVAL_MS in assigner-content.js);
-// matched here so DP Studio doesn't lag behind it.
-var ASSIGN_POLL_MS = 8000;
+// Refresh while the dashboard tab is open — matched to the extension's own
+// active-tab refresh rate (REFRESH_INTERVAL_MS = 3000 in assigner-content.js;
+// its 15s BACKGROUND_REFRESH_INTERVAL_MS only applies when the CRM tab
+// itself isn't visible, which doesn't have an equivalent here) so both
+// surfaces poll the sheet on the same cadence.
+var ASSIGN_POLL_MS = 3000;
 
 function assignStartPoll() {
   assignStopPoll();
