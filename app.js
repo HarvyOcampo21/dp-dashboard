@@ -1977,11 +1977,6 @@ function getAuroraColors() {
   };
 
   var colors = palettes[theme] || palettes.green;
-
-  if (light) {
-    // Lighter, more pastel in light mode
-    return colors.map(function(c) { return c + '55'; });
-  }
   return colors;
 }
 
