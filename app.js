@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.0';
+var APP_VERSION = '1.0.1';
 var APP_CHANGELOG = [
+  { version: '1.0.1', date: '2026-08-19', notes: 'PPTX export: Combined — All Weeks slide now comes before the per-week slides; added trend-calculation description under the Week-over-Week Analysis table.' },
   { version: '1.0.0', date: '2026-08-19', notes: 'Combined-first report ordering, week-over-week trend explanation, footer with auto-tracked version.' },
 ];
 
@@ -3283,12 +3284,21 @@ function generateReportPPTX() {
       fill:{ color:PANEL }, autoPage:false, rowH:0.55, valign:'middle',
     });
 
+    var tableBottom = 1.5 + 0.55 * (rows.length + 1);
+    s.addText(
+      'The trend column compares Week 1 against the most recent week (Week ' + weeks.length + '). For each metric, we take the '
+      + 'difference (last week\u2019s value minus week 1\u2019s value) and, where week 1 isn\u2019t zero, express that difference as a '
+      + 'percentage change relative to week 1. \u25B2 means the metric increased over the period, \u25BC means it decreased, and '
+      + '\u2014 even means it stayed the same. Weeks in between are shown for reference but aren\u2019t part of the trend calculation.',
+      { x:0.6, y:tableBottom + 0.2, w:12.1, h:1.1, fontFace:FONT, fontSize:10.5, color:BROWN, valign:'top', lineSpacing:14 }
+    );
+
     footer(s);
   }
 
   if (weeks) {
-    weeks.forEach(function(w) { addSummarySlide(w.label, w.from + ' → ' + w.to, w.data); });
     addSummarySlide('Combined — All Weeks', rangeLabel, combined);
+    weeks.forEach(function(w) { addSummarySlide(w.label, w.from + ' → ' + w.to, w.data); });
     addWeekAnalysisSlide(weeks);
   } else {
     addSummarySlide('Summary', rangeLabel, combined);
