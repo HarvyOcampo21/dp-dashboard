@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.2';
+var APP_VERSION = '1.0.3';
 var APP_CHANGELOG = [
+  { version: '1.0.3', date: '2026-08-20', notes: 'Added the new "Agent Name" sheet column to the table view, listing detail modal, edit form, and search — so it now flows through wherever other fields like Rejection Reason / Notes already appear.' },
   { version: '1.0.2', date: '2026-08-20', notes: 'Assignment Dashboard: split the "Pending" column into separate Assigned / In Progress columns (Quick Report, Whole Team, per-editor, and category tables) to match the Daily Report table.' },
   { version: '1.0.1', date: '2026-08-19', notes: 'PPTX export: Combined — All Weeks slide now comes before the per-week slides; added trend-calculation description under the Week-over-Week Analysis table.' },
   { version: '1.0.0', date: '2026-08-19', notes: 'Combined-first report ordering, week-over-week trend explanation, footer with auto-tracked version.' },
@@ -588,7 +589,7 @@ function getRows(editor) {
 
 function rowMatch(r) {
   var s = S.search;
-  return ['DP-REQ Number','Listing Reference','Location','Unit / Plot No','Status','Photographer','Category','List Type']
+  return ['DP-REQ Number','Listing Reference','Location','Unit / Plot No','Status','Photographer','Category','List Type','Agent Name']
     .some(function(f) { return r[f] && String(r[f]).toLowerCase().includes(s); });
 }
 
@@ -821,7 +822,7 @@ var COLS = [
   'Date Uploaded','DP-REQ Number','Listing Reference','Listing Link',
   'Location','Unit / Plot No','Category','Beds','Furnishing',
   'Photographer','List Type','Status','Received Date',
-  'Rejection Reason','Agent Request Sub-type','Notes'
+  'Rejection Reason','Agent Request Sub-type','Notes','Agent Name'
 ];
 
 function renderTable(rows) {
@@ -906,7 +907,7 @@ function openModal(row) {
   var fields = [
     'Location','Unit / Plot No','Category','Beds','Furnishing',
     'Photographer','List Type','Received Date','Rejection Reason',
-    'Agent Request Sub-type','Notes'
+    'Agent Request Sub-type','Agent Name','Notes'
   ];
 
   var html = '<div class="modal-head">'
@@ -1159,6 +1160,7 @@ function openEditModal() {
     { key:'List Type',              type:'select', options:['','Photo Request','Agent Request','Brochure'] },
     { key:'Rejection Reason',       type:'text' },
     { key:'Agent Request Sub-type', type:'text' },
+    { key:'Agent Name',             type:'text' },
     { key:'Notes',                  type:'textarea' },
   ];
 
