@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.3';
+var APP_VERSION = '1.0.4';
 var APP_CHANGELOG = [
+  { version: '1.0.4', date: '2026-08-20', notes: 'PPTX Rejected Listings table now includes an Agent Name column alongside Rejection Reason. (Excel export already included Agent Name in Raw Data / Rejected Listings sheets via the shared COLS list — confirmed, no change needed there.)' },
   { version: '1.0.3', date: '2026-08-20', notes: 'Added the new "Agent Name" sheet column to the table view, listing detail modal, edit form, and search — so it now flows through wherever other fields like Rejection Reason / Notes already appear.' },
   { version: '1.0.2', date: '2026-08-20', notes: 'Assignment Dashboard: split the "Pending" column into separate Assigned / In Progress columns (Quick Report, Whole Team, per-editor, and category tables) to match the Daily Report table.' },
   { version: '1.0.1', date: '2026-08-19', notes: 'PPTX export: Combined — All Weeks slide now comes before the per-week slides; added trend-calculation description under the Week-over-Week Analysis table.' },
@@ -3324,11 +3325,12 @@ function generateReportPPTX() {
       req:    r['DP-REQ Number']     || '—',
       ref:    r['Listing Reference'] || '—',
       editor: r._editor              || '—',
+      agent:  r['Agent Name']        || '—',
       reason: r['Rejection Reason']  || 'No reason recorded',
     };
   });
 
-  var REASON_COL_W = 5.2; // inches — must match colW[3] below
+  var REASON_COL_W = 4.5; // inches — must match colW[4] below
   var CHARS_PER_LINE = Math.max(10, Math.floor(REASON_COL_W * 15)); // ~15 chars/inch at 11.5pt
   var TABLE_TOP = 1.6, FOOTER_Y = H - 0.6;
   var HEADER_H = 0.45;
@@ -3361,7 +3363,7 @@ function generateReportPPTX() {
     var sub = rangeLabel + (weeks ? '  ·  Combined' : '') + '  ·  ' + rejections.length + ' item(s)' + (pageCount > 1 ? '  ·  Page ' + (pageNum+1) + ' of ' + pageCount : '');
     s.addText(sub, { x:0.6, y:0.95, w:11, h:0.35, fontFace:FONT, fontSize:13, color:BROWN });
 
-    var header = ['DP-REQ Number','Listing Reference','Editor','Rejection Reason'].map(function(t) {
+    var header = ['DP-REQ Number','Listing Reference','Editor','Agent Name','Rejection Reason'].map(function(t) {
       return { text:t, options:{ bold:true, color:BROWN, fill:{ color:PANEL2 }, fontSize:12 } };
     });
 
@@ -3373,6 +3375,7 @@ function generateReportPPTX() {
           { text:r.req,    options:{ color:RED, fontSize:12, bold:true, fontFace:'Courier New', fill:{ color:PANEL } } },
           { text:r.ref,    options:{ color:INK, fontSize:12, fill:{ color:PANEL } } },
           { text:r.editor, options:{ color:INK, fontSize:12, fill:{ color:PANEL } } },
+          { text:r.agent,  options:{ color:INK, fontSize:12, fill:{ color:PANEL } } },
           { text:r.reason, options:{ color:BROWN, fontSize:11.5, fill:{ color:PANEL } } },
         ];
       });
@@ -3383,13 +3386,14 @@ function generateReportPPTX() {
         { text:'', options:{ fill:{ color:PANEL } } },
         { text:'', options:{ fill:{ color:PANEL } } },
         { text:'', options:{ fill:{ color:PANEL } } },
+        { text:'', options:{ fill:{ color:PANEL } } },
       ]];
       rowHeights = [HEADER_H, 0.6];
     }
 
     s.addTable([header].concat(dataRows), {
       x:0.6, y:TABLE_TOP, w:12.1,
-      colW:[2.3,3.1,1.5,REASON_COL_W],
+      colW:[2.0,2.6,1.3,1.7,REASON_COL_W],
       border:{ type:'solid', color:BORDER, pt:0.75 },
       fill:{ color:PANEL }, autoPage:false, rowH:rowHeights, valign:'middle',
     });
