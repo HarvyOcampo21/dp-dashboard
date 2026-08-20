@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.1';
+var APP_VERSION = '1.0.2';
 var APP_CHANGELOG = [
+  { version: '1.0.2', date: '2026-08-20', notes: 'Assignment Dashboard: split the "Pending" column into separate Assigned / In Progress columns (Quick Report, Whole Team, per-editor, and category tables) to match the Daily Report table.' },
   { version: '1.0.1', date: '2026-08-19', notes: 'PPTX export: Combined — All Weeks slide now comes before the per-week slides; added trend-calculation description under the Week-over-Week Analysis table.' },
   { version: '1.0.0', date: '2026-08-19', notes: 'Combined-first report ordering, week-over-week trend explanation, footer with auto-tracked version.' },
 ];
@@ -2389,10 +2390,10 @@ function assignEmptyCategoryTally() {
   var t = {};
   ASSIGN_CATEGORY_OPTIONS.forEach(function(c) {
     t[c] = {
-      completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0, beds: {},
+      completed: 0, assigned: 0, inProgress: 0, onHold: 0, rejected: 0, total: 0, beds: {},
       // Individual DP-REQ refs behind each count, so a cell's number can
       // be clicked to reveal exactly which listings it's made of.
-      refs: { completed: [], pending: [], onHold: [], rejected: [] },
+      refs: { completed: [], assigned: [], inProgress: [], onHold: [], rejected: [] },
     };
   });
   return t;
@@ -2422,7 +2423,7 @@ function computeAssignDashboardStats(scope) {
     var editor = entry.editor || '';
     var status = entry.status || '';
     var bucket = status === 'Completed' ? 'completed' : status === 'Rejected' ? 'rejected' :
-      status === 'On Hold' ? 'onHold' : 'pending';
+      status === 'On Hold' ? 'onHold' : status === 'In Progress' ? 'inProgress' : 'assigned';
 
     var target = editor
       ? (byEditor[editor] || (byEditor[editor] = { total: 0, latest: null, categories: assignEmptyCategoryTally() }))
@@ -2481,37 +2482,40 @@ function assignNumCell(v, refs, title) {
 }
 
 function assignCategoryTableHtml(categories, ownerLabel) {
-  var emptyRefs = { completed: [], pending: [], onHold: [], rejected: [] };
-  var sums = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
-  var sumRefs = { completed: [], pending: [], onHold: [], rejected: [] };
+  var emptyRefs = { completed: [], assigned: [], inProgress: [], onHold: [], rejected: [] };
+  var sums = { completed: 0, assigned: 0, inProgress: 0, onHold: 0, rejected: 0, total: 0 };
+  var sumRefs = { completed: [], assigned: [], inProgress: [], onHold: [], rejected: [] };
   var rows = ASSIGN_CATEGORY_OPTIONS.map(function(cat) {
-    var d = categories[cat] || { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
+    var d = categories[cat] || { completed: 0, assigned: 0, inProgress: 0, onHold: 0, rejected: 0, total: 0 };
     var refs = d.refs || emptyRefs;
-    sums.completed += d.completed; sums.pending += d.pending; sums.onHold += d.onHold;
+    sums.completed += d.completed; sums.assigned += d.assigned; sums.inProgress += d.inProgress; sums.onHold += d.onHold;
     sums.rejected += d.rejected; sums.total += d.total;
     sumRefs.completed = sumRefs.completed.concat(refs.completed);
-    sumRefs.pending = sumRefs.pending.concat(refs.pending);
+    sumRefs.assigned = sumRefs.assigned.concat(refs.assigned);
+    sumRefs.inProgress = sumRefs.inProgress.concat(refs.inProgress);
     sumRefs.onHold = sumRefs.onHold.concat(refs.onHold);
     sumRefs.rejected = sumRefs.rejected.concat(refs.rejected);
-    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
+    var rowAllRefs = refs.completed.concat(refs.assigned, refs.inProgress, refs.onHold, refs.rejected);
     return '<tr>'
       + '<td class="editor-name">' + esc(cat) + '</td>'
       + assignNumCell(d.completed, refs.completed, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Completed')
-      + assignNumCell(d.pending, refs.pending, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Pending')
+      + assignNumCell(d.assigned, refs.assigned, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Assigned')
+      + assignNumCell(d.inProgress, refs.inProgress, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 In Progress')
       + assignNumCell(d.onHold, refs.onHold, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 On Hold')
       + assignNumCell(d.rejected, refs.rejected, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 Rejected')
       + assignNumCell(d.total, rowAllRefs, ownerLabel + ' \u00B7 ' + cat + ' \u00B7 All statuses')
       + '</tr>';
   }).join('');
 
-  var grandAllRefs = sumRefs.completed.concat(sumRefs.pending, sumRefs.onHold, sumRefs.rejected);
+  var grandAllRefs = sumRefs.completed.concat(sumRefs.assigned, sumRefs.inProgress, sumRefs.onHold, sumRefs.rejected);
   return '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
-    + '<th>Category</th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
+    + '<th>Category</th><th>Completed</th><th>Assigned</th><th>In Progress</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
     + '</tr></thead><tbody>'
     + rows
     + '<tr class="team-total"><td>Total</td>'
     + assignNumCell(sums.completed, sumRefs.completed, ownerLabel + ' \u00B7 Completed')
-    + assignNumCell(sums.pending, sumRefs.pending, ownerLabel + ' \u00B7 Pending')
+    + assignNumCell(sums.assigned, sumRefs.assigned, ownerLabel + ' \u00B7 Assigned')
+    + assignNumCell(sums.inProgress, sumRefs.inProgress, ownerLabel + ' \u00B7 In Progress')
     + assignNumCell(sums.onHold, sumRefs.onHold, ownerLabel + ' \u00B7 On Hold')
     + assignNumCell(sums.rejected, sumRefs.rejected, ownerLabel + ' \u00B7 Rejected')
     + assignNumCell(sums.total, grandAllRefs, ownerLabel + ' \u00B7 All statuses')
@@ -2523,15 +2527,16 @@ function assignCategoryTableHtml(categories, ownerLabel) {
 // (mirrors the CRM extension's dashboard, which shows this ahead of the
 // full category breakdown).
 function assignEditorStatusTotals(editorData) {
-  var t = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: editorData.total };
-  var refs = { completed: [], pending: [], onHold: [], rejected: [] };
+  var t = { completed: 0, assigned: 0, inProgress: 0, onHold: 0, rejected: 0, total: editorData.total };
+  var refs = { completed: [], assigned: [], inProgress: [], onHold: [], rejected: [] };
   ASSIGN_CATEGORY_OPTIONS.forEach(function(cat) {
     var d = editorData.categories[cat];
     if (!d) return;
-    t.completed += d.completed; t.pending += d.pending; t.onHold += d.onHold; t.rejected += d.rejected;
+    t.completed += d.completed; t.assigned += d.assigned; t.inProgress += d.inProgress; t.onHold += d.onHold; t.rejected += d.rejected;
     if (d.refs) {
       refs.completed = refs.completed.concat(d.refs.completed);
-      refs.pending = refs.pending.concat(d.refs.pending);
+      refs.assigned = refs.assigned.concat(d.refs.assigned);
+      refs.inProgress = refs.inProgress.concat(d.refs.inProgress);
       refs.onHold = refs.onHold.concat(d.refs.onHold);
       refs.rejected = refs.rejected.concat(d.refs.rejected);
     }
@@ -2541,38 +2546,41 @@ function assignEditorStatusTotals(editorData) {
 
 function assignQuickReportHtml(byEditor, editorNames) {
   if (editorNames.length === 0) return '';
-  var grand = { completed: 0, pending: 0, onHold: 0, rejected: 0, total: 0 };
-  var grandRefs = { completed: [], pending: [], onHold: [], rejected: [] };
+  var grand = { completed: 0, assigned: 0, inProgress: 0, onHold: 0, rejected: 0, total: 0 };
+  var grandRefs = { completed: [], assigned: [], inProgress: [], onHold: [], rejected: [] };
   var rows = editorNames.map(function(name) {
     var r = assignEditorStatusTotals(byEditor[name]);
     var d = r.sums, refs = r.refs;
-    grand.completed += d.completed; grand.pending += d.pending; grand.onHold += d.onHold;
+    grand.completed += d.completed; grand.assigned += d.assigned; grand.inProgress += d.inProgress; grand.onHold += d.onHold;
     grand.rejected += d.rejected; grand.total += d.total;
     grandRefs.completed = grandRefs.completed.concat(refs.completed);
-    grandRefs.pending = grandRefs.pending.concat(refs.pending);
+    grandRefs.assigned = grandRefs.assigned.concat(refs.assigned);
+    grandRefs.inProgress = grandRefs.inProgress.concat(refs.inProgress);
     grandRefs.onHold = grandRefs.onHold.concat(refs.onHold);
     grandRefs.rejected = grandRefs.rejected.concat(refs.rejected);
-    var rowAllRefs = refs.completed.concat(refs.pending, refs.onHold, refs.rejected);
+    var rowAllRefs = refs.completed.concat(refs.assigned, refs.inProgress, refs.onHold, refs.rejected);
     return '<tr>'
       + '<td class="editor-name">' + esc(name) + '</td>'
       + assignNumCell(d.completed, refs.completed, name + ' \u00B7 Completed')
-      + assignNumCell(d.pending, refs.pending, name + ' \u00B7 Pending')
+      + assignNumCell(d.assigned, refs.assigned, name + ' \u00B7 Assigned')
+      + assignNumCell(d.inProgress, refs.inProgress, name + ' \u00B7 In Progress')
       + assignNumCell(d.onHold, refs.onHold, name + ' \u00B7 On Hold')
       + assignNumCell(d.rejected, refs.rejected, name + ' \u00B7 Rejected')
       + assignNumCell(d.total, rowAllRefs, name + ' \u00B7 All statuses')
       + '</tr>';
   }).join('');
 
-  var grandAllRefs = grandRefs.completed.concat(grandRefs.pending, grandRefs.onHold, grandRefs.rejected);
+  var grandAllRefs = grandRefs.completed.concat(grandRefs.assigned, grandRefs.inProgress, grandRefs.onHold, grandRefs.rejected);
   return '<div class="dp-dash-quick-report">'
     + '<div class="dp-bed-table-title">Quick Report</div>'
     + '<div class="report-table-wrap"><table class="report-table"><thead><tr>'
-    + '<th></th><th>Completed</th><th>Pending</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
+    + '<th></th><th>Completed</th><th>Assigned</th><th>In Progress</th><th>On Hold</th><th>Rejected</th><th>Total</th>'
     + '</tr></thead><tbody>'
     + rows
     + '<tr class="team-total"><td>Total</td>'
     + assignNumCell(grand.completed, grandRefs.completed, 'Whole Team \u00B7 Completed')
-    + assignNumCell(grand.pending, grandRefs.pending, 'Whole Team \u00B7 Pending')
+    + assignNumCell(grand.assigned, grandRefs.assigned, 'Whole Team \u00B7 Assigned')
+    + assignNumCell(grand.inProgress, grandRefs.inProgress, 'Whole Team \u00B7 In Progress')
     + assignNumCell(grand.onHold, grandRefs.onHold, 'Whole Team \u00B7 On Hold')
     + assignNumCell(grand.rejected, grandRefs.rejected, 'Whole Team \u00B7 Rejected')
     + assignNumCell(grand.total, grandAllRefs, 'Whole Team \u00B7 All statuses')
