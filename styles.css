@@ -1269,6 +1269,23 @@ body {
    and non-zero values still stand out via .num-faint's lighter weight. */
 .report-table td.num-faint { color: var(--text2); font-weight: 400; }
 
+/* "↺N" badge next to a Completed count — flags how many of those were
+   received/assigned before the current report window and only finished
+   today, so Completed can visibly exceed Assigned without looking wrong. */
+.carry-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(234,179,8,.16);
+  color: var(--yellow);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  cursor: default;
+}
+
 @media (max-width: 900px) {
   .report-table th, .report-table td { padding: 8px 8px; font-size: 11px; }
 }

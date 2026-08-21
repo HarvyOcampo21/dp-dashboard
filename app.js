@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.4';
+var APP_VERSION = '1.0.5';
 var APP_CHANGELOG = [
+  { version: '1.0.5', date: '2026-08-21', notes: 'Daily Report: Completed column now shows a "↺N" badge (per editor and Team Total) when some of that count was received/assigned before the current period and only finished today — explains why Completed can read higher than Assigned for that period.' },
   { version: '1.0.4', date: '2026-08-20', notes: 'PPTX Rejected Listings table now includes an Agent Name column alongside Rejection Reason. (Excel export already included Agent Name in Raw Data / Rejected Listings sheets via the shared COLS list — confirmed, no change needed there.)' },
   { version: '1.0.3', date: '2026-08-20', notes: 'Added the new "Agent Name" sheet column to the table view, listing detail modal, edit form, and search — so it now flows through wherever other fields like Rejection Reason / Notes already appear.' },
   { version: '1.0.2', date: '2026-08-20', notes: 'Assignment Dashboard: split the "Pending" column into separate Assigned / In Progress columns (Quick Report, Whole Team, per-editor, and category tables) to match the Daily Report table.' },
@@ -1383,6 +1384,39 @@ function entryInReportRange(iso) {
   return true;
 }
 
+// Like entryInReportRange(), but for a raw date VALUE straight off a Copier
+// row (e.g. row['Received Date']) rather than an Assigner ISO timestamp.
+// Copier date fields come from Google Sheets as formatted strings (e.g.
+// "Thu, Aug 20, 2026"), which `new Date(...)` can choke on, so this goes
+// through parseAnyDate()'s gsheet-string fallback instead. A missing/
+// unparseable value returns false — "can't confirm it's in range" — same
+// treatment as entryInReportRange gives a missing timestamp.
+function rawDateInReportRange(raw) {
+  if (!raw) return false;
+  var d = parseAnyDate(raw);
+  if (!d || isNaN(d)) return false;
+
+  if (S.fromDate && S.toDate) {
+    var from = new Date(S.fromDate);
+    var to   = new Date(S.toDate); to.setHours(23,59,59,999);
+    return d >= from && d <= to;
+  }
+  if (!S.range || S.range === 'all') return true;
+
+  var now   = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (S.range === 'today') return d >= today;
+  if (S.range === 'yesterday') {
+    var yStart = new Date(today); yStart.setDate(yStart.getDate() - 1);
+    var yEnd   = new Date(yStart); yEnd.setHours(23,59,59,999);
+    return d >= yStart && d <= yEnd;
+  }
+  if (S.range === 'week')  { var w = new Date(today); w.setDate(w.getDate() - 7);  return d >= w; }
+  if (S.range === 'month') { var m = new Date(today); m.setMonth(m.getMonth() - 1); return d >= m; }
+  return true;
+}
+
 // Shared by renderReport() (on-screen Daily Report table) and
 // generateReportPPTX() (the export), so the two can never drift apart.
 //
@@ -1407,6 +1441,16 @@ function computeEditorBreakdown() {
     var agent   = uploadedRows.filter(function(r) { return norm(r['List Type']) === 'agent request'; }).length;
     var offplan = uploadedRows.filter(function(r) { return norm(r['List Type']) === 'brochure'; }).length;
 
+    // "Completed" above counts by Date Uploaded falling in-range — but a
+    // listing can have been RECEIVED (assigned into this editor's queue)
+    // on an earlier day and only get uploaded today, which is exactly the
+    // "more completed than assigned" mismatch editors kept asking about.
+    // Flag those here so the report can show them separately instead of
+    // silently folding them into "Completed" with no explanation.
+    var carriedOver = uploadedRows.filter(function(r) {
+      return r['Received Date'] && !rawDateInReportRange(r['Received Date']);
+    }).length;
+
     var assignEntries = ASSIGN_DATA.assignments.filter(function(e) { return e && (e.editor || '') === editor; });
     var assigned    = assignEntries.filter(function(e) { return e.status === 'Assigned'    && entryInReportRange(e.assignedAt); }).length;
     var inProgress  = assignEntries.filter(function(e) { return e.status === 'In Progress' && entryInReportRange(e.startedAt || e.assignedAt); }).length;
@@ -1417,6 +1461,7 @@ function computeEditorBreakdown() {
 
     return {
       editor: editor, photo: photo, agent: agent, offplan: offplan, completed: completed,
+      carriedOver: carriedOver,
       assigned: assigned, inProgress: inProgress, onHold: onHold, rejected: rejected,
       total: completed + assigned + inProgress + onHold + rejected,
     };
@@ -1426,11 +1471,12 @@ function computeEditorBreakdown() {
   var team = editorBreakdown.reduce(function(s, r) {
     return {
       photo: s.photo+r.photo, agent: s.agent+r.agent, offplan: s.offplan+r.offplan,
-      completed: s.completed+r.completed, assigned: s.assigned+r.assigned,
+      completed: s.completed+r.completed, carriedOver: s.carriedOver+r.carriedOver,
+      assigned: s.assigned+r.assigned,
       inProgress: s.inProgress+r.inProgress, onHold: s.onHold+r.onHold,
       rejected: s.rejected+r.rejected, total: s.total+r.total,
     };
-  }, {photo:0,agent:0,offplan:0,completed:0,assigned:0,inProgress:0,onHold:0,rejected:0,total:0});
+  }, {photo:0,agent:0,offplan:0,completed:0,carriedOver:0,assigned:0,inProgress:0,onHold:0,rejected:0,total:0});
 
   return { allRows: allRows, rejectedRows: rejectedRows, editorBreakdown: editorBreakdown, team: team };
 }
@@ -1540,6 +1586,19 @@ function computeReportStats() {
   };
 }
 
+// Renders the Completed cell's contents. When some of the completed count
+// was RECEIVED before the current report window and only finished today
+// (a carry-over), appends a small "↺N" badge so the number doesn't look
+// like it's outpacing "Assigned" for no reason — see carriedOver in
+// computeEditorBreakdown() for how that count is derived.
+function completedCellHtml(completed, carriedOver) {
+  if (!carriedOver) return String(completed);
+  var title = carriedOver === 1
+    ? '1 of these was assigned before this period and only completed now'
+    : carriedOver + ' of these were assigned before this period and only completed now';
+  return completed + '<span class="carry-badge" title="' + esc(title) + '">↺' + carriedOver + '</span>';
+}
+
 function numCell(v, color, faint) {
   var style = color ? ' style="color:' + color + '"' : '';
   var cls = 'num-cell' + (v===0?' num-zero':'') + (faint?' num-faint':'');
@@ -1564,7 +1623,7 @@ function buildReportSectionHTML(stats, title, subtitle, headerButtonsHtml) {
       + '<td class="num-cell hl-soft">' + r.photo   + '</td>'
       + '<td class="num-cell hl-soft">' + r.agent   + '</td>'
       + '<td class="num-cell hl-soft">' + r.offplan + '</td>'
-      + '<td class="num-cell hl-strong">' + r.completed + '</td>'
+      + '<td class="num-cell hl-strong">' + completedCellHtml(r.completed, r.carriedOver) + '</td>'
       + numCell(r.assigned,   null, true)
       + numCell(r.inProgress, null, true)
       + numCell(r.onHold,     null, true)
@@ -1620,7 +1679,7 @@ function buildReportSectionHTML(stats, title, subtitle, headerButtonsHtml) {
     +     '<td class="num-cell hl-soft">' + team.photo + '</td>'
     +     '<td class="num-cell hl-soft">' + team.agent + '</td>'
     +     '<td class="num-cell hl-soft">' + team.offplan + '</td>'
-    +     '<td class="num-cell hl-strong">' + team.completed + '</td>'
+    +     '<td class="num-cell hl-strong">' + completedCellHtml(team.completed, team.carriedOver) + '</td>'
     +     numCell(team.assigned,   null, true)
     +     numCell(team.inProgress, null, true)
     +     numCell(team.onHold,     null, true)
