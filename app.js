@@ -14,8 +14,9 @@
 //   Keeping this history in the file itself means that if a bug ships, we can
 //   scan APP_CHANGELOG to see exactly which version introduced it and revert
 //   to the last known-good version/commit.
-var APP_VERSION = '1.0.6';
+var APP_VERSION = '1.0.7';
 var APP_CHANGELOG = [
+  { version: '1.0.7', date: '2026-08-21', notes: 'Daily Report: added a short caption below the table explaining the "↺N" carry-over badge, shown whenever that section has at least one carry-over.' },
   { version: '1.0.6', date: '2026-08-21', notes: 'Carry-over badge (1.0.5) now sources its "assigned" date from the Assigner sheet\'s own assignedAt (matched by ref = DP-REQ Number) instead of the Copier\'s Received Date, so it agrees with the Assigned column above it, which is Assigner-sourced too.' },
   { version: '1.0.5', date: '2026-08-21', notes: 'Daily Report: Completed column now shows a "↺N" badge (per editor and Team Total) when some of that count was assigned before the current period and only finished today — explains why Completed can read higher than Assigned for that period.' },
   { version: '1.0.4', date: '2026-08-20', notes: 'PPTX Rejected Listings table now includes an Agent Name column alongside Rejection Reason. (Excel export already included Agent Name in Raw Data / Rejected Listings sheets via the shared COLS list — confirmed, no change needed there.)' },
@@ -1671,7 +1672,10 @@ function buildReportSectionHTML(stats, title, subtitle, headerButtonsHtml) {
     +   '<tr class="pending-row"><td>Pending</td><td colspan="' + footColspan + '"></td><td class="num-cell">' + stats.pending + '</td></tr>'
     +   '<tr class="rate-row"><td>Completion Rate</td><td colspan="' + footColspan + '"><span style="font-size:11px;color:var(--text3)">Uploaded ÷ Total</span></td><td class="num-cell">' + stats.compRate + '%</td></tr>'
     +   '</tbody></table>'
-    + '</div>';
+    + '</div>'
+    + (team.carriedOver > 0
+        ? '<div class="carry-legend"><span class="carry-badge" style="margin-left:0;">↺N</span> of Completed was assigned before this period (per the Assigner) and only finished today — so Completed can read higher than Assigned for that period.</div>'
+        : '');
 }
 
 // Week-over-week comparison table shown under the weekly sections — one row

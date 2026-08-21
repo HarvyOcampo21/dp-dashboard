@@ -1286,6 +1286,20 @@ body {
   cursor: default;
 }
 
+/* Caption under the report table explaining the ↺N badge above — only
+   rendered (by buildReportSectionHTML) when at least one carry-over
+   exists in that section, so it doesn't take up space otherwise. */
+.carry-legend {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  background: var(--bg2);
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 @media (max-width: 900px) {
   .report-table th, .report-table td { padding: 8px 8px; font-size: 11px; }
 }
